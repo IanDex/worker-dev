@@ -1,0 +1,926 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hodor · Mi revisión</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --fondo: #0a1229; --hondo: #0d1632; --caja: #111d40; --sup: #15234b; --sel: #1a2c5e; --hundido: #081027;
+    --linea: #22325f; --linea-2: #1a284f; --linea-3: #2b3d70; --texto: #eef1fa; --suave: #b5bac5; --tenue: #949aab; --tenue-2: #7f869a;
+    --primario: #1f49b6; --primario-h: #2a58cc; --acc: #5adbff; --acc-t: #90e7ff; --acc-fondo: #142a66;
+    --ok: #01d196; --warn: #fcc956; --warn-t: #fddb8e; --bad: #ea586f; --bad-t: #f4a3b0; --naranja: #f59f62; --info: #8198d6;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--fondo); color: var(--texto); font: 14px/1.5 Inter, system-ui, sans-serif; }
+  .mono { font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; }
+  .rot { font-family: "IBM Plex Mono", monospace; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--tenue-2); }
+  a { color: var(--acc-t); } a:hover { color: var(--acc); }
+  button { font: inherit; cursor: pointer; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .btn { border-radius: 8px; padding: 9px 14px; border: 1px solid var(--linea-3); background: var(--caja); color: var(--texto); font-weight: 500; font-size: 13.5px; }
+  .btn:hover:not(:disabled) { border-color: var(--suave); }
+  .btn.prim { background: var(--primario); border-color: var(--primario); color: #fff; font-weight: 600; }
+  .btn.prim:hover:not(:disabled) { background: var(--primario-h); }
+  .btn.ok { background: var(--ok); border-color: var(--ok); color: var(--fondo); font-weight: 600; }
+  .btn.fant { background: transparent; border-color: var(--linea); color: var(--tenue); }
+  .btn.warn { background: transparent; border-color: rgba(252,201,86,.5); color: var(--warn-t); }
+  .chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 3px 10px; border-radius: 999px; white-space: nowrap; border: 1px solid transparent; }
+  .c-ok { color: var(--ok); background: rgba(1,209,150,.12); } .c-warn { color: var(--warn-t); background: rgba(252,201,86,.12); }
+  .c-bad { color: var(--bad-t); background: rgba(234,88,111,.12); } .c-nar { color: var(--naranja); background: rgba(245,159,98,.12); }
+  .c-info { color: var(--info); border-color: var(--linea-3); } .c-acc { color: var(--acc); background: rgba(90,219,255,.12); }
+  .c-off { color: var(--tenue); border-color: var(--linea); }
+  .punto { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  input, textarea { background: var(--hondo); color: var(--texto); border: 1px solid var(--linea); border-radius: 8px; padding: 9px 11px; font: inherit; }
+  input:focus, textarea:focus, button:focus-visible, a:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
+  header { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 14px 32px; border-bottom: 1px solid var(--linea); }
+  .marca { display: inline-flex; align-items: center; gap: 10px; font-weight: 600; font-size: 15px; }
+  .marca i { width: 10px; height: 10px; border-radius: 50%; background: var(--ok); }
+  .avatar { width: 30px; height: 30px; border-radius: 50%; background: var(--acc-fondo); color: var(--acc-t); display: grid; place-items: center; font-size: 12px; font-weight: 600; }
+  .vista { background: rgba(252,201,86,.1); border-bottom: 1px solid rgba(252,201,86,.3); color: var(--warn-t); padding: 8px 32px; font-size: 13px; }
+  .hero { display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 56px 24px 36px; }
+  .hero h1 { margin: 0; font-size: 34px; font-weight: 600; letter-spacing: -0.02em; text-align: center; }
+  .hero p { margin: 0; color: var(--tenue); text-align: center; max-width: 580px; }
+  .buscador { width: 100%; max-width: 760px; display: flex; align-items: center; gap: 10px; background: var(--caja); border: 1px solid var(--linea-3); border-radius: 999px; padding: 8px 8px 8px 22px; }
+  .buscador input { flex: 1; min-width: 0; background: transparent; border: 0; padding: 10px 0; font-family: "IBM Plex Mono", monospace; }
+  .buscador input:focus { outline: none; }
+  .buscador:focus-within { border-color: var(--acc); }
+  .buscador .btn { border-radius: 999px; padding: 12px 26px; }
+  .pistas { display: flex; gap: 18px; flex-wrap: wrap; justify-content: center; font-size: 12.5px; color: var(--tenue-2); }
+  main { width: 100%; max-width: 1120px; margin: 0 auto; padding: 0 24px 80px; display: flex; flex-direction: column; gap: 16px; }
+  nav.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--linea); flex-wrap: wrap; }
+  nav.tabs button { background: none; border: 0; padding: 10px 16px; color: var(--tenue); font-weight: 500; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  nav.tabs button.on { color: var(--texto); border-bottom-color: var(--acc); }
+  nav.tabs .n { font-family: "IBM Plex Mono", monospace; font-size: 12px; margin-left: 4px; color: var(--acc-t); }
+  .barra { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .barra .filtro { background: transparent; color: var(--tenue); border: 1px solid var(--linea); border-radius: 999px; padding: 4px 12px; font-size: 12.5px; }
+  .barra .filtro.on { background: var(--acc-fondo); color: var(--acc-t); border-color: var(--acc-fondo); }
+  .barra input.busca { min-width: 220px; margin-left: auto; padding: 7px 11px; font-size: 13px; }
+  .grupo { background: var(--caja); border: 1px solid var(--linea); border-radius: 12px; overflow: visible; }
+  .grupo-cab { display: flex; align-items: center; gap: 10px; flex-wrap: nowrap; padding: 14px 18px; position: relative; }
+  .grupo-cab b { font-size: 15px; }
+  .grupo-cab .chip, .grupo-cab .icono, .grupo-cab b { flex-shrink: 0; }
+  .grupo-cab:has(.plegar) { cursor: pointer; }
+  .ramas { display: flex; gap: 6px; flex-wrap: wrap; }
+  .plegar { width: 30px; height: 30px; border-radius: 6px; border: 0; background: transparent; color: var(--tenue); display: grid; place-items: center; }
+  .plegar:hover { background: var(--sel); color: var(--texto); }
+  .plegar svg { transition: transform .15s ease-out; }
+  .plegar[aria-expanded="false"] svg { transform: rotate(-90deg); }
+  .grupo.cerrado .grupo-cab { border-bottom: 0; }
+  .repo-camino { display: flex; flex-direction: column; gap: 8px; padding: 14px 18px; border-top: 1px solid var(--linea-2); }
+  .camino { display: flex; align-items: stretch; }
+  .nodo { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--linea); }
+  .nodo .rama { font-family: "IBM Plex Mono", monospace; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--tenue-2); }
+  .nodo .que { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .nodo .nota { font-size: 12px; color: var(--tenue-2); }
+  .nodo.t-tu { background: rgba(252,201,86,.08); border-color: rgba(252,201,86,.45); } .nodo.t-tu .que span { color: var(--warn-t); }
+  .nodo.t-mal { background: rgba(234,88,111,.07); border-color: rgba(234,88,111,.45); } .nodo.t-mal .que span { color: var(--bad-t); }
+  .nodo.t-ok { background: rgba(1,209,150,.07); border-color: rgba(1,209,150,.4); } .nodo.t-ok .que span { color: var(--ok); }
+  .nodo.t-corre { background: rgba(90,219,255,.06); border-color: rgba(90,219,255,.35); } .nodo.t-corre .que span { color: var(--acc-t); }
+  .nodo.t-puede { border: 1px dashed var(--acc); } .nodo.t-puede .que span { color: var(--acc-t); }
+  .nodo.t-no { border: 1px dashed var(--linea-3); } .nodo.t-no .que span { color: var(--tenue); }
+  .nodo.t-hecho { opacity: .75; } .nodo.t-hecho .que span { color: var(--ok); }
+  .nodo .btn { padding: 6px 12px; font-size: 12.5px; }
+  .flecha { flex: 0 0 22px; display: grid; place-items: center; color: var(--linea-3); }
+  .siguiente { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; padding: 12px 18px; background: var(--hondo); border-top: 1px solid var(--linea-2); }
+  .leyenda { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12.5px; color: var(--tenue); }
+  .leyenda i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+  .puertas { display: flex; gap: 6px; flex-wrap: wrap; }
+  @media (max-width: 720px) { .camino { flex-direction: column; } .flecha { transform: rotate(90deg); height: 22px; } .grupo-cab { flex-wrap: wrap; } }
+  @media (prefers-reduced-motion: reduce) { .plegar svg { transition: none; } }
+  .fila { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 13px 18px; border-top: 1px solid var(--linea-2); background: none; border-left: 0; border-right: 0; border-bottom: 0; width: 100%; color: var(--texto); text-align: left; }
+  .fila:hover { background: var(--sel); }
+  .puntaje { font-family: "IBM Plex Mono", monospace; font-size: 18px; font-weight: 500; width: 64px; text-align: right; }
+  .menu { position: absolute; right: 14px; top: 46px; z-index: 5; background: var(--sup); border: 1px solid var(--linea-3); border-radius: 10px; padding: 6px; display: flex; flex-direction: column; min-width: 200px; }
+  .menu button, .menu a { background: none; border: 0; color: var(--texto); text-align: left; padding: 9px 12px; border-radius: 6px; text-decoration: none; font-size: 13.5px; }
+  .menu button:hover, .menu a:hover { background: var(--sel); }
+  .icono { width: 34px; height: 34px; border-radius: 8px; border: 1px solid var(--linea); background: transparent; color: var(--tenue); display: grid; place-items: center; }
+  .pag { display: flex; align-items: center; justify-content: flex-end; gap: 10px; color: var(--tenue); font-size: 13px; }
+  .vacio { color: var(--tenue-2); padding: 36px 0; text-align: center; }
+  .aviso { padding: 10px 14px; border-radius: 8px; font-size: 13.5px; }
+  .det { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 16px 18px; border-top: 1px solid var(--linea-2); }
+  .det:first-child { border-top: 0; }
+  .fondo-cajon { position: fixed; inset: 0; background: rgba(8,16,39,.62); z-index: 20; }
+  .cajon { position: fixed; top: 0; right: 0; bottom: 0; width: 70%; min-width: min(640px, 100vw); max-width: 100vw; background: var(--sup); border-left: 1px solid var(--linea-3); z-index: 21; overflow: auto; padding: 28px 36px; display: flex; flex-direction: column; gap: 20px; }
+  .banda { display: flex; align-items: center; gap: 22px; flex-wrap: wrap; padding: 16px 18px; border-radius: 10px; }
+  .h { display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; background: var(--caja); border: 1px solid var(--linea); border-radius: 10px; }
+  .h p { margin: 0; line-height: 1.6; color: #d7dbe6; }
+  .caja { display: flex; flex-direction: column; gap: 8px; background: var(--caja); border: 1px solid var(--linea); border-radius: 10px; padding: 16px; }
+  .dos { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 10px 12px; border-top: 1px solid var(--linea-2); vertical-align: top; }
+  th { background: var(--hondo); color: var(--tenue-2); font-weight: 500; font-size: 12px; border-top: 0; }
+  pre { white-space: pre-wrap; background: var(--hundido); border: 1px solid var(--linea); padding: 14px; border-radius: 10px; font-size: 12px; max-height: 520px; overflow: auto; color: var(--suave); }
+  .modal { position: fixed; inset: 0; z-index: 30; background: rgba(8,16,39,.75); display: grid; place-items: center; padding: 16px; }
+  .modal > div { width: 100%; max-width: 560px; background: var(--sup); border: 1px solid var(--linea-3); border-radius: 14px; padding: 28px; display: flex; flex-direction: column; gap: 16px; }
+  .campo { display: flex; flex-direction: column; gap: 6px; }
+  .campo label { font-size: 13px; color: var(--suave); }
+  #toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--sup); border: 1px solid var(--linea-3); padding: 10px 16px; border-radius: 8px; display: none; z-index: 40; max-width: 90vw; }
+  @media (max-width: 720px) { header, .vista { padding-left: 16px; padding-right: 16px; } .cajon { width: 100%; padding: 20px 16px; } .barra input.busca { margin-left: 0; width: 100%; } }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="toast" role="status"></div>
+<script>
+const CLAVE = "__CLAVE__", VERSION = "__VERSION__";
+const ESTADOS_HU = [["todas", "Todas"], ["progreso", "En progreso"], ["pr staging", "PR staging"], ["staging", "Staging"], ["bloqueado", "Bloqueado"], ["produccion", "Producción"], ["sin", "Sin Jira"]];
+const POR_PAGINA = 6, POR_PAGINA_DET = 6;
+const S = { plan: {}, debate: {}, pensando: "", abiertos: new Set(), tab: "mis", filtroHu: "todas", busca: "", pagina: 1, pagDet: 1, verArchivados: false, menu: "", cajon: null, verIgnorados: false, tipoSug: "idea", config: false, paso: 1, datos: null };
+
+const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const ahora = () => Date.now() / 1000;
+function hace(ts) { if (!ts) return ""; ts = typeof ts === "string" ? Date.parse(ts) / 1000 : ts; const s = ahora() - ts; if (s < 90) return "hace un momento"; if (s < 3600) return `hace ${Math.round(s / 60)} min`; if (s < 86400) return `hace ${Math.round(s / 3600)} h`; const d = Math.round(s / 86400); return d === 1 ? "ayer" : `hace ${d} d`; }
+function dura(ts) { if (!ts) return ""; const s = ahora() - ts; if (s < 3600) return `${Math.max(1, Math.round(s / 60))} min`; if (s < 86400) return `${Math.round(s / 3600)} h`; return `${Math.round(s / 86400)} d`; }
+function aviso(t) { const el = document.getElementById("toast"); el.textContent = t; el.style.display = "block"; clearTimeout(aviso.t); aviso.t = setTimeout(() => (el.style.display = "none"), 5000); }
+async function api(ruta, cuerpo) {
+  const r = await fetch(ruta, { method: cuerpo ? "POST" : "GET", headers: { "X-Panel": CLAVE, "Content-Type": "application/json" }, body: cuerpo ? JSON.stringify(cuerpo) : undefined });
+  return r.json();
+}
+const ini = (c) => String(c || "").split("@")[0].split(/[.\s_-]+/).filter(Boolean).slice(0, 2).map((p) => p[0].toUpperCase()).join("");
+const nombre = (c) => String(c || "").split("@")[0].split(/[._]/).map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(" ");
+
+function leerFinal(texto) {
+  const b = [...String(texto || "").matchAll(/```json\s*(\{[\s\S]*?\})\s*```/g)];
+  if (!b.length) return null;
+  try { return JSON.parse(b[b.length - 1][1]); } catch { return null; }
+}
+function datosDe(x) { return (x.datos && x.datos.puntaje != null) ? x.datos : (leerFinal(x.final) || null); }
+
+function grupoHu(h) {
+  if (!h) return "sin";
+  const e = (h.estado || "").toLowerCase();
+  if (h.categoria === "done" || /produc|done|cerrad|terminad/.test(e)) return "produccion";
+  if (/bloque/.test(e)) return "bloqueado";
+  if (/pr staging/.test(e)) return "pr staging";
+  if (/staging/.test(e)) return "staging";
+  return "progreso";
+}
+function chipHu(h) {
+  if (!h) return `<span class="chip c-off">sin Jira</span>`;
+  const g = grupoHu(h); const cls = { produccion: "c-ok", bloqueado: "c-bad", "pr staging": "c-warn", staging: "c-acc", progreso: "c-info" }[g] || "c-off";
+  return `<span class="chip ${cls}">${esc(h.estado)}${h.estado_desde ? ` · ${dura(h.estado_desde)}` : ""}</span>`;
+}
+
+function estadoPr(x) {
+  const d = datosDe(x);
+  if (x.estado === "pendiente" && !x.entregado) return ["En cola", "c-acc"];
+  if (x.estado === "corriendo" || x.estado === "v3") return ["Analizando en tu worker", "c-acc"];
+  if (x.estado === "v3_analizado") return d && Number(d.criticas || 0) ? ["Analizado · tiene críticas", "c-bad"] : d && d.puntaje < 80 ? ["Analizado · bajo el umbral", "c-warn"] : ["Analizado · listo para enviar", "c-ok"];
+  if (x.entregado && ["pendiente", "espera", "corriendo"].includes(x.estado)) return ["Enviado · " + (x.motivo || "pasando las reglas"), "c-warn"];
+  if (x.estado === "v3_listo") return ["Enviado · Hodor lo procesa", "c-warn"];
+  if (x.estado === "hecha") return x.accion === "aprobado" ? ["Enviado · aprobado", "c-ok"] : x.accion === "comentado" ? ["Enviado · con comentarios", "c-nar"] : ["Enviado · " + (x.accion || "procesado"), "c-info"];
+  if (x.estado === "superada") return ["Cambió el commit · analiza de nuevo", "c-warn"];
+  if (x.estado === "cancelada") return [x.motivo || "Cancelado", "c-off"];
+  return [x.estado, "c-off"];
+}
+const colorPuntaje = (p) => p == null ? "var(--tenue-2)" : p >= 85 ? "var(--ok)" : p >= 70 ? "var(--warn)" : "var(--bad)";
+const amb = (x) => ({ development: "dev", master: "ci", release: "prod" }[x.destino] || (String(x.rama || "").split("/")[1] || "").toLowerCase() || "?");
+
+// ── Pantallas ──
+
+const CHEVRON = `<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg>`;
+const plegar = (clave, titulo) => { const abierto = S.abiertos.has(clave); return `<button class="plegar" data-plegar="${esc(clave)}" aria-expanded="${abierto}" aria-label="${abierto ? "Colapsar" : "Expandir"} ${esc(titulo)}">${CHEVRON}</button>`; };
+
+function cabecera() {
+  const d = S.datos || {}, e = d.estado || {};
+  return `${e.vista ? `<div class="vista">Vista previa como <b>${esc(d.dev || "")}</b>: ves lo mismo que él. Analizar, enviar, abrir la terminal y mandar sugerencias están desactivados para no actuar en su nombre.</div>` : ""}
+  <header>
+    <span class="marca"><i></i>Hodor · Mi revisión</span>
+    <span style="flex:1"></span>
+    ${e.vista ? `<span class="chip c-warn"><span class="punto"></span>vista previa</span>` : `<span class="chip c-ok"><span class="punto"></span>worker conectado</span>`}
+    <span class="mono" style="font-size:12px;color:var(--tenue)">${esc(VERSION)}</span>
+    <button class="icono" data-accion="config" aria-label="Configuración"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"></path></svg></button>
+    <span style="display:inline-flex;align-items:center;gap:8px"><span class="avatar">${esc(ini(d.dev))}</span><span style="color:var(--suave)">${esc(nombre(d.dev))}</span></span>
+  </header>`;
+}
+
+function hero() {
+  return `<section class="hero">
+    <h1>¿Qué PR revisamos?</h1>
+    <p>Pega el link de tu PR. Tu Claude lo analiza con las mismas reglas del revisor; corriges, vuelves a analizar y, cuando quedes conforme, lo entregas. Lo que no analices lo revisa el revisor central.</p>
+    <form class="buscador" data-form="pedir">
+      <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#949aab" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
+      <label for="url" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">Link del PR</label>
+      <input id="url" name="url" placeholder="https://…/codecommit/repositories/ms-company/pull-requests/87796" autocomplete="off">
+      <button class="btn prim" type="submit">Analizar</button>
+    </form>
+    <div class="pistas"><span>también acepta el número: <span class="mono" style="color:var(--suave)">#87796</span></span><span>todo PR necesita su historia en la rama</span><span>con críticas, altas, un IDOR o menos de 80 no se entrega</span></div>
+  </section>`;
+}
+
+function porHistoria() {
+  const d = S.datos;
+  const analisisPorPr = {};
+  for (const a of d.analisis || []) analisisPorPr[String(a.pr)] ||= a;
+  const prs = {};
+  for (const p of d.prs || []) prs[String(p.pr)] = { ...p };
+  for (const a of d.analisis || []) {
+    const k = String(a.pr);
+    prs[k] = { pr: k, repo: a.repo, rama: a.rama, destino: a.destino, url: a.url, historia: a.historia, estado: "abierto", ...(prs[k] || {}) };
+  }
+  for (const p of Object.values(prs)) { p.analisis = analisisPorPr[p.pr] || null; p.historia = p.historia || (p.analisis && p.analisis.historia) || "Sin historia"; }
+  return Object.values(prs);
+}
+
+function filtrar(historias) {
+  const ocultos = S.datos.ocultos || {};
+  const q = S.busca.trim().toLowerCase();
+  const grupos = {};
+  for (const p of porHistoria()) {
+    const hu = p.historia, h = historias[hu];
+    if ((ocultos[`hu:${hu}`] === "archivado") !== S.verArchivados) continue;
+    const g = grupoHu(h);
+    if (S.filtroHu === "todas" ? g === "produccion" : g !== S.filtroHu) continue;
+    if (q && !`${hu} ${h ? h.titulo : ""} ${p.repo} ${p.pr} ${p.rama}`.toLowerCase().includes(q)) continue;
+    (grupos[hu] ||= { hu, h, prs: [] }).prs.push(p);
+  }
+  const reciente = (g) => Math.max(...g.prs.map((p) => (p.analisis && p.analisis.analizado_en) || p.creado || 0));
+  return Object.values(grupos).sort((a, b) => reciente(b) - reciente(a));
+}
+
+function conteos(historias) {
+  const c = {}, hus = new Set(porHistoria().map((p) => p.historia));
+  for (const hu of hus) { const g = grupoHu(historias[hu]); c[g] = (c[g] || 0) + 1; }
+  c.todas = [...hus].filter((hu) => grupoHu(historias[hu]) !== "produccion").length;
+  return c;
+}
+
+function vistaMis() {
+  const d = S.datos, historias = d.historias || {};
+  const c = conteos(historias);
+  const grupos = filtrar(historias);
+  const paginas = Math.max(1, Math.ceil(grupos.length / POR_PAGINA));
+  S.pagina = Math.min(S.pagina, paginas);
+  const visibles = grupos.slice((S.pagina - 1) * POR_PAGINA, S.pagina * POR_PAGINA);
+  const pedidos = (d.pedidos || []).map((p) => p.resultado
+    ? `<div class="aviso c-bad">#${esc(p.pr)}: ${esc(String(p.resultado).replace(/^rechazado:\s*/, ""))}</div>`
+    : `<div class="aviso c-acc">#${esc(p.pr)}: pedido ${esc(hace(p.en))}, Hodor lo está validando…</div>`).join("");
+  return `${pedidos}
+    <div class="barra" role="group" aria-label="Filtrar por estado de la historia">
+      ${ESTADOS_HU.map(([k, l]) => `<button class="filtro ${S.filtroHu === k ? "on" : ""}" data-filtro="${k}">${l}${c[k] ? ` <span class="mono">${c[k]}</span>` : ""}</button>`).join("")}
+      <input class="busca" data-busca placeholder="Buscar historia, repo o PR" value="${esc(S.busca)}" aria-label="Buscar">
+    </div>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;font-size:12.5px;color:var(--tenue-2)">
+      <span>Tus PRs de los últimos 60 días, por historia: cada repo va de development a master y a release.</span>
+      <span style="flex:1"></span>
+      <span class="leyenda"><span><i style="background:rgba(252,201,86,.25);border:1px solid rgba(252,201,86,.6)"></i>te toca</span><span><i style="background:rgba(234,88,111,.2);border:1px solid rgba(234,88,111,.6)"></i>corregir</span><span><i style="background:rgba(1,209,150,.2);border:1px solid rgba(1,209,150,.6)"></i>aprobado, falta mergear</span><span><i style="border:1px dashed var(--acc)"></i>puedes abrirlo</span><span><i style="border:1px dashed var(--linea-3)"></i>todavía no</span></span>
+      ${visibles.length ? `<button class="btn fant" data-plegartodos="mis">${visibles.every((g) => S.abiertos.has(`mis:${g.hu}`)) ? "Colapsar todas" : "Expandir todas"}</button>` : ""}
+    </div>
+    ${S.filtroHu === "todas" && c.produccion ? `<div style="font-size:12.5px;color:var(--tenue-2)">${c.produccion} historia(s) en producción no se muestran aquí; están en el filtro <b>Producción</b>.</div>` : ""}
+    ${visibles.length ? visibles.map(grupo).join("") : `<p class="vacio">${porHistoria().length ? "Nada coincide con el filtro." : "Todavía no tienes PRs. Pega el link de uno arriba."}</p>`}
+    <div class="pag">
+      <button class="btn fant" data-accion="archivados">${S.verArchivados ? "Ver activas" : "Ver archivadas"}</button>
+      <span style="flex:1"></span>
+      <span>${grupos.length ? `${(S.pagina - 1) * POR_PAGINA + 1}–${Math.min(S.pagina * POR_PAGINA, grupos.length)} de ${grupos.length} historias` : ""}</span>
+      <button class="icono" data-pag="-1" ${S.pagina <= 1 ? "disabled" : ""} aria-label="Página anterior">‹</button>
+      <span class="mono">${S.pagina} / ${paginas}</span>
+      <button class="icono" data-pag="1" ${S.pagina >= paginas ? "disabled" : ""} aria-label="Página siguiente">›</button>
+    </div>`;
+}
+
+function semaforo(h) {
+  if (!h) return "";
+  const t = h.tiempo || {};
+  const fmt = (n) => String(Math.round(n * 10) / 10).replace(".", ",");
+  if (!t.estimadas) return `<span class="chip c-off" title="La historia no tiene story points en Jira: no puedo medir si va en tiempo.">sin estimar</span>`;
+  if (t.usadas == null) return `<span class="chip c-off" title="${esc(`${h.puntos} SP = ${fmt(t.estimadas)} h hábiles. Todavía no pasó a En progreso en Jira.`)}">${esc(h.puntos)} SP · sin iniciar</span>`;
+  const cls = { ok: "c-ok", warn: "c-warn", bad: "c-bad" }[t.color] || "c-off";
+  const inicio = h.inicio ? new Date(h.inicio * 1000).toLocaleString("es-CO", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
+  const tip = `${h.puntos} SP = ${fmt(t.estimadas)} h hábiles (1 SP = 4 h). Lleva ${fmt(t.usadas)} h hábiles desde que pasó a En progreso${inicio ? ` (${inicio})` : ""}${h.fin ? ", hasta que terminó" : ""}. `
+    + (t.color === "ok" ? "Va dentro del tiempo." : t.color === "warn" ? "Se está acercando al tiempo estimado." : `Se pasó por ${fmt(t.usadas - t.estimadas)} h.`)
+    + " Jornada: lunes a viernes, 9-13 y 14-18.";
+  return `<span class="chip ${cls}" title="${esc(tip)}"><span class="punto"></span>${fmt(t.usadas)} / ${fmt(t.estimadas)} h</span>`;
+}
+
+const RAMAS = [["development", "dev"], ["master", "ci"], ["release", "prod"]];
+const FLECHA = `<div class="flecha" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"></path></svg></div>`;
+
+function esIdor(d) { return (d && d.hallazgos || []).some((h) => /idor/i.test(`${h.titulo || ""} ${h.comentario || ""} ${h.categoria || ""}`)); }
+function bloqueo(d) {
+  if (!d) return "";
+  if (esIdor(d)) return "tiene un IDOR: corrígelo; solo el revisor lo cierra";
+  if (Number(d.criticas || 0)) return `tiene ${d.criticas} crítica(s)`;
+  if (Number(d.altas || 0)) return `tiene ${d.altas} alta(s)`;
+  if (d.puntaje != null && Number(d.puntaje) < 80) return `${d.puntaje} de 80: no alcanza para entregar`;
+  return "";
+}
+function puertasDe(pr) { const x = (S.datos.detectados || []).find((y) => String(y.pr) === String(pr)); return x ? x : null; }
+
+function nodo(p, anterior, rama) {
+  const link = p ? `<a href="${esc(p.url)}" target="_blank" rel="noopener" class="mono">#${esc(p.pr)}</a>` : "";
+  const n = (tono, que, nota, boton) => ({ tono, html: `<div class="nodo t-${tono}"><span class="rama">${rama}</span><span class="que">${link}<span>${que}</span></span>${boton ? `<span class="que">${boton}</span>` : ""}${nota ? `<span class="nota">${nota}</span>` : ""}</div>` });
+  if (!p) {
+    if (rama === "development") return n("no", "Sin PR", "", "");
+    if (anterior && anterior.tono === "hecho") return n("puede", "Puedes abrir el PR", rama === "release" ? "Al analizarlo corre el plan de pruebas en ci" : "Pega su link arriba para analizarlo", "");
+    return n("no", "Sin PR todavía", rama === "master" ? "Se abre cuando development esté mergeado" : "Después de master", "");
+  }
+  const an = p.analisis, d = an ? datosDe(an) : null;
+  const punt = d && d.puntaje != null ? `${d.puntaje}` : "";
+  if (p.estado === "mergeado") return n("hecho", "✓ Mergeado", [punt, an && an.entregado ? "entregado" : ""].filter(Boolean).join(" · "), "");
+  if (p.estado === "cerrado") return n("no", "Cerrado sin mergear", "", "");
+  if (p.aprobado_por) return n("ok", `Aprobado por ${p.aprobado_por === "Cristian" ? "el revisor" : "Hodor"}`, `${punt ? punt + " · " : ""}listo para mergear`, "");
+  const ver = an ? `<button class="btn" data-abrir="${an.id}">Ver análisis</button>` : "";
+  if (an) {
+    if (an.estado === "corriendo" || an.estado === "v3" || (an.estado === "pendiente" && !an.entregado)) return n("corre", "Analizando en tu worker", "", ver);
+    if (an.estado === "superada") return n("tu", "Cambió el commit", "Analízalo de nuevo", `<button class="btn prim" data-pedir="${esc(p.url)}">Analizar</button>`);
+    if (an.estado === "v3_analizado") {
+      const b = bloqueo(d);
+      return b ? n("mal", `${punt ? punt + ": " : ""}hay que corregir`, b, `<button class="btn" data-abrir="${an.id}">Ver hallazgos</button>`)
+               : n("tu", `${punt} · listo para entregar`, "Revísalo y entrégalo", `<button class="btn prim" data-abrir="${an.id}">Entregar</button>`);
+    }
+    if (an.entregado && ["pendiente", "espera", "corriendo", "v3_listo"].includes(an.estado)) return n("corre", "Entregado · Hodor lo procesa", an.motivo ? esc(an.motivo) : "", ver);
+    if (an.estado === "hecha" && an.accion === "comentado") return n("mal", "Con comentarios de Hodor", punt, ver);
+  }
+  const det = puertasDe(p.pr);
+  if (det && !det.listo) {
+    const malas = det.puertas.filter((x) => !x.ok);
+    return n(malas.every((x) => x.espera) ? "no" : "mal", "Todavía no se puede analizar", malas.map((x) => esc(x.texto)).join(" · "), "");
+  }
+  return n("tu", "Falta tu análisis", "abierto · sin aprobar", `<button class="btn prim" data-pedir="${esc(p.url)}">Analizar</button>`);
+}
+
+function caminoRepo(repo, prs) {
+  const nodos = [];
+  for (const [rama, a] of RAMAS) {
+    const lista = prs.filter((p) => amb(p) === a).sort((x, y) => (y.creado || 0) - (x.creado || 0));
+    const vivo = lista.find((p) => p.estado === "abierto") || lista.find((p) => p.estado === "mergeado") || lista[0];
+    nodos.push({ rama, p: vivo, ...nodo(vivo, nodos[nodos.length - 1], rama) });
+  }
+  return { repo, nodos, html: `<div class="repo-camino"><b style="font-weight:600">${esc(repo)}</b><div class="camino">${nodos.map((x) => x.html).join(FLECHA)}</div></div>` };
+}
+
+function siguiente(caminos) {
+  const orden = ["mal", "tu", "ok", "puede"];
+  const frases = [];
+  for (const tono of orden) {
+    for (const c of caminos) for (const x of c.nodos) {
+      if (x.tono !== tono) continue;
+      const pr = x.p ? `<b>${esc(c.repo)} #${esc(x.p.pr)}</b>` : `<b>${esc(c.repo)}</b>`;
+      if (tono === "mal") frases.push(`Corrige ${pr} (${x.rama})`);
+      if (tono === "tu") frases.push(x.p && x.p.analisis && x.p.analisis.estado === "v3_analizado" ? `Entrega ${pr}` : `Analiza ${pr}`);
+      if (tono === "ok") frases.push(`Mergea ${pr}`);
+      if (tono === "puede") frases.push(`Abre el PR de ${pr} a ${x.rama}`);
+    }
+  }
+  return frases.length ? frases.slice(0, 3).join(" · ") + (frases.length > 3 ? ` · y ${frases.length - 3} más` : "") : "";
+}
+
+function resumenHu(caminos) {
+  const n = { mal: 0, tu: 0, ok: 0 };
+  for (const c of caminos) for (const x of c.nodos) if (x.tono in n) n[x.tono] += 1;
+  if (n.mal) return `<span style="color:var(--bad-t)">${n.mal} por corregir</span>`;
+  if (n.tu) return `<span style="color:var(--warn-t)">${n.tu} te toca${n.tu === 1 ? "" : "n"}</span>`;
+  if (n.ok) return `<span style="color:var(--ok)">${n.ok} por mergear</span>`;
+  return `<span style="color:var(--tenue-2)">al día</span>`;
+}
+
+function grupo(g) {
+  const clave = `mis:${g.hu}`, abierto = S.abiertos.has(clave);
+  const menuAbierto = S.menu === g.hu;
+  const porRepo = {};
+  for (const p of g.prs) (porRepo[p.repo] ||= []).push(p);
+  const caminos = Object.entries(porRepo).sort().map(([repo, prs]) => caminoRepo(repo, prs));
+  const sig = siguiente(caminos);
+  return `<section class="grupo ${abierto ? "" : "cerrado"}">
+    <div class="grupo-cab">
+      ${plegar(clave, g.hu)}
+      <b>${esc(g.hu)}</b>
+      <span style="color:var(--tenue);font-size:13px;flex:0 1 380px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(g.h ? g.h.titulo : "")}</span>
+      ${chipHu(g.h)}
+      ${semaforo(g.h)}
+      <span style="flex:1"></span>
+      <span style="font-size:12.5px;white-space:nowrap">${resumenHu(caminos)}</span>
+      <button class="icono" data-menu="${esc(g.hu)}" aria-label="Más acciones de ${esc(g.hu)}" aria-expanded="${menuAbierto}">⋯</button>
+      ${menuAbierto ? `<div class="menu" role="menu">
+        <button data-archivar="${esc(g.hu)}" role="menuitem">${S.verArchivados ? "Desarchivar historia" : "Archivar historia"}</button>
+        ${g.h && g.h.url ? `<a href="${esc(g.h.url)}" target="_blank" rel="noopener" role="menuitem">Ver en Jira ↗</a>` : ""}
+      </div>` : ""}
+    </div>
+    ${abierto ? `${sig ? `<div class="siguiente"><span class="rot">Siguiente</span><span>${sig}</span></div>` : ""}${caminos.map((c) => c.html).join("")}` : ""}
+  </section>`;
+}
+
+function vistaDetectados() {
+  const d = S.datos, ocultos = d.ocultos || {}, historias = d.historias || {};
+  const analizados = new Set((d.analisis || []).map((x) => String(x.pr)));
+  const todos = (d.detectados || []).filter((x) => !analizados.has(String(x.pr)));
+  const visibles = todos;
+  const grupos = {};
+  for (const x of visibles) (grupos[x.historia || "Sin historia"] ||= []).push(x);
+  const lista = Object.entries(grupos).map(([hu, prs]) => ({ hu, prs, h: historias[hu] }))
+    .sort((a, b) => Math.max(...b.prs.map((p) => p.creado || 0)) - Math.max(...a.prs.map((p) => p.creado || 0)));
+  const paginasDet = Math.max(1, Math.ceil(lista.length / POR_PAGINA_DET));
+  S.pagDet = Math.min(S.pagDet, paginasDet);
+  const qg = (q) => q === "OK" ? `<span class="chip c-ok">Sonar OK</span>` : q === "ERROR" ? `<span class="chip c-bad">Sonar en rojo</span>` : `<span class="chip c-off">Sonar —</span>`;
+  const filaDet = (x) => {
+    const puertas = x.puertas || [];
+    const malas = puertas.filter((q) => !q.ok);
+    return `<div class="det">
+      <div style="display:flex;flex-direction:column;gap:8px;min-width:0;flex:999 1 420px">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><b>${esc(x.repo)}</b><span class="mono" style="color:var(--tenue)">#${esc(x.pr)}</span><span class="chip c-info">${esc(x.destino)}</span><span style="color:var(--suave);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:0 1 420px">${esc(x.titulo)}</span></div>
+        <div class="puertas">${puertas.map((q) => `<span class="chip ${q.ok ? "c-ok" : q.espera ? "c-warn" : "c-bad"}">${q.ok ? "✓" : q.espera ? "●" : "✗"} ${esc(q.texto)}</span>`).join("")}</div>
+      </div>
+      ${x.listo ? `<button class="btn prim" data-pedir="${esc(x.url)}">Analizar</button>`
+        : `<span style="font-size:12.5px;color:var(--suave);max-width:300px;text-align:right">${malas.some((q) => q.id === "sonar" && !q.espera) ? `Corrige lo que marca Sonar y haz push.` : malas.some((q) => q.id === "build") ? "Arregla el build y haz push." : malas.some((q) => q.id.startsWith("rama-")) ? "Se analiza cuando la rama anterior esté mergeada." : malas.some((q) => q.id === "historia") ? "Pon la historia en la rama o en el título." : "Espera el veredicto de Sonar."}</span>`}
+    </div>`;
+  };
+  const grupoDet = (g) => {
+    const clave = `det:${g.hu}`, abierto = S.abiertos.has(clave);
+    const amb3 = ["dev", "ci", "prod"].map((a) => { const prs = g.prs.filter((p) => amb(p) === a); return prs.length ? `<span class="chip c-info">${a} · ${prs.map((p) => `#${esc(p.pr)}`).join(" ")}</span>` : ""; }).join("");
+    return `<section class="grupo ${abierto ? "" : "cerrado"}">
+      <div class="grupo-cab">
+        ${plegar(clave, g.hu)}
+        <b>${esc(g.hu)}</b>
+        <span style="color:var(--tenue);font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:420px">${esc(g.h ? g.h.titulo : g.hu === "Sin historia" ? "La rama o el título no traen la historia: Hodor no los acepta así" : "")}</span>
+        ${g.hu === "Sin historia" ? `<span class="chip c-bad">sin historia</span>` : chipHu(g.h)}
+        <span style="flex:1"></span>
+        <span class="ramas">${amb3}</span>
+        <span class="mono" style="font-size:12px;color:var(--tenue-2);white-space:nowrap">${g.prs.length} PR</span>
+      </div>
+      ${abierto ? g.prs.map((x) => filaDet(x)).join("") : ""}
+    </section>`;
+  };
+  return `<p style="margin:0;color:var(--tenue);font-size:13px">Tus PRs abiertos de los últimos 30 días que vimos pasar por los canales de Sonar, agrupados por historia. Si lo analizas tú, Hodor usa tu análisis; si no, lo revisa el revisor central igual que siempre.</p>
+    ${lista.length ? `<div class="barra"><span style="flex:1"></span><button class="btn fant" data-plegartodos="det">${lista.every((g) => S.abiertos.has(`det:${g.hu}`)) ? "Colapsar todas" : "Expandir todas"}</button></div>
+    ${lista.slice((S.pagDet - 1) * POR_PAGINA_DET, S.pagDet * POR_PAGINA_DET).map(grupoDet).join("")}
+    <div class="pag"><span style="flex:1"></span>
+      <span>${(S.pagDet - 1) * POR_PAGINA_DET + 1}–${Math.min(S.pagDet * POR_PAGINA_DET, lista.length)} de ${lista.length} historias · ${visibles.length} PRs</span>
+      <button class="icono" data-pagdet="-1" ${S.pagDet <= 1 ? "disabled" : ""} aria-label="Página anterior">‹</button>
+      <span class="mono">${S.pagDet} / ${paginasDet}</span>
+      <button class="icono" data-pagdet="1" ${S.pagDet >= paginasDet ? "disabled" : ""} aria-label="Página siguiente">›</button>
+    </div>` : `<p class="vacio">No hay PRs tuyos sin analizar.</p>`}
+    <details class="grupo" style="padding:0"><summary style="cursor:pointer;padding:12px 18px;color:var(--suave)">¿Por qué un PR no tiene Analizar?</summary>
+      <div style="padding:0 18px 14px 18px;color:var(--suave);line-height:1.6">Analizar solo sale cuando el PR cumple lo mismo que Hodor exige antes de revisar: CodeBuild exitoso, Sonar en verde, la historia en la rama y, para master o release, la rama anterior ya mergeada. Al pedirlo, Hodor revisa además que no tenga conflictos, que pasen las aprobaciones automáticas y que el código ya esté en la rama anterior.</div>
+    </details>`;
+}
+
+function vistaSugerencias() {
+  const d = S.datos;
+  const tipos = [["idea", "Me gustaría que tuviera"], ["mejora", "Mejoraría esto"], ["no-sirve", "Esto no me sirve"], ["error", "Algo falla"]];
+  return `<section class="caja" style="gap:14px">
+      <b style="font-size:15px">¿Qué quieres que cambie?</b>
+      <span style="color:var(--tenue);font-size:13px">Lo lee el revisor. Lo que te estorba, lo que te falta, lo que harías distinto: todo sirve.</span>
+      <div class="barra">${tipos.map(([k, l]) => `<button class="filtro ${S.tipoSug === k ? "on" : ""}" data-tiposug="${k}">${l}</button>`).join("")}</div>
+      <label for="sug" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">Tu sugerencia</label>
+      <textarea id="sug" rows="5" placeholder="Escribe aquí…"></textarea>
+      <div style="display:flex;justify-content:flex-end"><button class="btn prim" data-accion="sugerir">Enviar sugerencia</button></div>
+    </section>
+    ${(d.sugerencias || []).length ? `<section class="grupo">${d.sugerencias.map((s) => `<div class="det"><span class="chip c-info">${esc((tipos.find((t) => t[0] === s.tipo) || [0, s.tipo])[1])}</span><span style="flex:999 1 400px;color:var(--suave)">${esc(s.texto)}</span><span style="font-size:12.5px;color:var(--tenue-2)">${esc(hace(s.en))}</span>${s.enviada ? `<span class="chip c-ok">enviada</span>` : `<span class="chip c-warn">no se envió</span>`}</div>`).join("")}</section>` : `<p class="vacio">Todavía no has mandado sugerencias.</p>`}`;
+}
+
+// ── Cajón: hallazgos por ronda, debate y plan de pruebas ──
+
+function frenoPruebas(x) {
+  if ((x.destino || "") !== "release") return "";
+  const p = x.pruebas;
+  if (!p || !p.dictamen) return "falta el plan de pruebas en ci";
+  const idor = new Set(((p.plan || {}).escenarios || []).filter((e) => e.idor).map((e) => e.id));
+  const malos = (p.dictamen.escenarios || []).filter((e) => idor.has(e.id) && e.resultado !== "pasa").map((e) => e.id);
+  if (malos.length) return `el escenario de IDOR no pasa: ${malos.join(", ")}`;
+  if (p.dictamen.veredicto !== "pasa") return `el plan de pruebas dio «${p.dictamen.veredicto}»`;
+  return "";
+}
+
+function tarjetaHallazgo(hh, extra) {
+  const sev = String(hh.severidad || "").toLowerCase();
+  const sevChip = `<span class="chip ${sev === "critica" ? "c-bad" : sev === "alta" ? "c-nar" : sev === "media" ? "c-warn" : "c-off"}">${esc(hh.severidad)}</span>`;
+  return `<article class="h" style="${hh._retirado ? "opacity:.6" : hh._fuera ? "border-style:dashed" : ""}"><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">${sevChip}${hh._idor ? `<span class="chip c-bad">IDOR</span>` : ""}<b style="${hh._retirado ? "text-decoration:line-through" : ""}">${esc(hh.titulo)}</b><span style="flex:1"></span>${extra || ""}</div>
+    <span class="mono" style="font-size:12px;color:var(--tenue)">${esc(String(hh.archivo || "").split("/").pop())}${hh.linea ? `:${esc(hh.linea)}` : ""} · ${esc(hh.categoria || "")}</span><p>${esc(hh.comentario)}</p></article>`;
+}
+
+function seccionHallazgos(x, d) {
+  if (!d.resumen) return "";
+  const hall = d.hallazgos || [];
+  const vacio = `<div style="padding:18px;border-radius:10px;border:1px dashed var(--linea-3);color:var(--tenue);text-align:center">Sin hallazgos. Nada que corregir antes de entregar.</div>`;
+  const marca = (h) => h._retirado ? `<span class="chip c-off">retirado en el debate</span>` : "";
+  if (!x.ronda) return `<section style="display:flex;flex-direction:column;gap:10px"><span class="rot">Hallazgos · ${hall.length}</span>${hall.length ? hall.map((h) => tarjetaHallazgo(h, marca(h))).join("") : vacio}</section>`;
+  const r = x.ronda, grupo = (ids) => hall.filter((h) => ids.includes(h._i));
+  const previos = grupo(r.previos || []), nuevos = grupo(r.nuevos || []), fuera = grupo(r.fuera || []);
+  return `<section style="display:flex;flex-direction:column;gap:10px">
+    <div class="aviso c-acc">Ronda ${esc(r.numero || 2)}: lo analizado no cambia. Se verificaron los hallazgos de la ronda anterior y solo cuentan los nuevos que están en las líneas que cambiaste. Un IDOR cuenta siempre.</div>
+    <span class="rot">Siguen de la ronda anterior · ${previos.length}</span>${previos.length ? previos.map((h) => tarjetaHallazgo(h, marca(h))).join("") : `<span style="color:var(--tenue);font-size:13px">Todos los de la ronda anterior quedaron corregidos.</span>`}
+    ${nuevos.length ? `<span class="rot">Nuevo en tu cambio · ${nuevos.length}</span>${nuevos.map((h) => tarjetaHallazgo(h, marca(h))).join("")}` : ""}
+    ${fuera.length ? `<span class="rot">Fuera de alcance · no te bloquea · ${fuera.length}</span><span style="color:var(--tenue);font-size:13px">Está en código que no cambió desde la ronda anterior: no suma al puntaje ni frena la entrega. Le llega al revisor.</span>${fuera.map((h) => tarjetaHallazgo(h, `<span class="chip c-acc">va al revisor</span>`)).join("")}` : ""}
+  </section>`;
+}
+
+function seccionDebate(x, d) {
+  if (x.estado !== "v3_analizado" || !bloqueo(d)) return "";
+  const enMaquina = (S.datos.sesiones || []).map(String).includes(String(x.id));
+  const chat = (S.debate[x.id] || []);
+  const burbuja = (m) => m.rol === "dev"
+    ? `<div style="align-self:flex-end;max-width:78%;background:var(--primario);color:#fff;border-radius:12px 12px 4px 12px;padding:10px 14px;line-height:1.45;white-space:pre-wrap">${esc(m.texto)}</div>`
+    : `<div style="align-self:flex-start;max-width:86%;background:var(--caja);border:1px solid var(--linea);border-radius:12px 12px 12px 4px;padding:12px 14px;line-height:1.5;display:flex;flex-direction:column;gap:8px"><span style="white-space:pre-wrap">${esc(m.texto)}</span>
+       ${m.meta && m.meta.retirado != null ? `<span class="chip c-ok" style="align-self:flex-start">retirado: ${esc(m.meta.titulo || "")}${m.meta.puntaje != null ? ` · puntaje ${esc(m.meta.puntaje)}` : ""}</span>` : ""}
+       ${m.meta && m.meta.rechazado ? `<span class="chip c-bad" style="align-self:flex-start">${esc(m.meta.rechazado)}</span>` : ""}
+       ${m.meta && m.meta.error ? `<span class="chip c-bad" style="align-self:flex-start">${esc(m.meta.error === true ? "error" : m.meta.error)}</span>` : ""}</div>`;
+  const bitacora = (x.debate || []).map((b) => `<li><b>${esc(b.titulo)}</b> (${esc(b.severidad)}): ${esc(b.argumento)}</li>`).join("");
+  return `<section class="caja" style="gap:12px">
+    <span class="rot">Discutir con la revisión</span>
+    <span style="color:var(--tenue);font-size:13px">Es la misma sesión de Claude que hizo este análisis. Reglas fijas: el puntaje no se negocia; un hallazgo medio o bajo se retira solo con evidencia verificada en el código; una crítica, una alta o un IDOR no se retiran aquí: se hablan con el revisor. Cada retiro le llega a Hodor con tu argumento.</span>
+    ${d.puntaje_original != null && d.puntaje_original !== d.puntaje ? `<span class="mono" style="font-size:13px;color:var(--suave)">Puntaje: ${esc(d.puntaje_original)} → ${esc(d.puntaje)} (recalculado por los hallazgos que salieron, no por pedido)</span>` : ""}
+    ${bitacora ? `<details><summary style="cursor:pointer;color:var(--suave)">Retirados en el debate · ${(x.debate || []).length}</summary><ul style="margin:8px 0 0;padding-left:18px;color:var(--suave);line-height:1.6">${bitacora}</ul></details>` : ""}
+    <div style="display:flex;flex-direction:column;gap:12px">${chat.map(burbuja).join("") || `<span style="color:var(--tenue-2);font-size:13px">Todavía no hay mensajes.</span>`}${S.pensando === `debate:${x.id}` ? `<span class="chip c-acc" style="align-self:flex-start">la revisión está leyendo el código…</span>` : ""}</div>
+    ${enMaquina ? `<div style="display:flex;gap:10px;align-items:flex-end"><label for="msg-debate" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">Tu argumento</label>
+      <textarea id="msg-debate" rows="2" style="flex:1" placeholder="Argumenta con evidencia: archivo, línea, prueba…"></textarea>
+      <button class="btn prim" data-debatir="${x.id}" ${S.pensando ? "disabled" : ""}>Enviar</button></div>`
+      : `<span style="color:var(--warn-t);font-size:13px">La sesión de esta revisión no está en esta máquina: vuelve a analizar el PR para poder discutirla.</span>`}
+  </section>`;
+}
+
+const JSON_CLR = { k: "#90e7ff", s: "#01d196", n: "#fcc956", b: "#f4a3b0", p: "#949aab", l: "#5f6881" };
+function jsonBonito(texto) {
+  let v;
+  try { v = typeof texto === "string" ? JSON.parse(texto) : texto; } catch { return `<pre style="margin:0">${esc(texto)}</pre>`; }
+  const lineas = [];
+  const prim = (x) => `<span style="color:${typeof x === "string" ? JSON_CLR.s : typeof x === "number" ? JSON_CLR.n : JSON_CLR.b}">${esc(JSON.stringify(x))}</span>`;
+  const p = (s) => `<span style="color:${JSON_CLR.p}">${esc(s)}</span>`;
+  const andar = (x, ind, clave, coma) => {
+    const pre = "  ".repeat(ind) + (clave != null ? `<span style="color:${JSON_CLR.k}">"${esc(clave)}"</span>${p(": ")}` : ""), c = coma ? p(",") : "";
+    if (x === null || typeof x !== "object") return lineas.push(pre + prim(x) + c);
+    const arr = Array.isArray(x), ks = arr ? x.map((_, i) => i) : Object.keys(x);
+    if (!ks.length) return lineas.push(pre + p(arr ? "[]" : "{}") + c);
+    lineas.push(pre + p(arr ? "[" : "{"));
+    ks.slice(0, 200).forEach((k, i) => andar(x[k], ind + 1, arr ? null : k, i < Math.min(ks.length, 200) - 1));
+    lineas.push("  ".repeat(ind) + p(arr ? "]" : "}") + c);
+  };
+  andar(v, 0, null, false);
+  return `<div class="mono" style="font-size:12px;line-height:1.6;max-height:420px;overflow:auto">${lineas.map((l, i) => `<div style="display:grid;grid-template-columns:34px minmax(0,1fr);white-space:pre-wrap;word-break:break-all"><span style="text-align:right;padding-right:10px;color:${JSON_CLR.l};user-select:none">${i + 1}</span><span>${l}</span></div>`).join("")}</div>`;
+}
+
+function md(texto) {
+  const filas = String(texto || "").split("\n"), out = [];
+  let tabla = [];
+  const enLinea = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/`([^`]+)`/g, `<code class="mono">$1</code>`);
+  const cerrarTabla = () => { if (!tabla.length) return; const [cab, , ...cuerpo] = tabla; out.push(`<div style="overflow:auto"><table><tr>${cab.map((c) => `<th>${enLinea(c)}</th>`).join("")}</tr>${cuerpo.map((f) => `<tr>${f.map((c) => `<td>${enLinea(c)}</td>`).join("")}</tr>`).join("")}</table></div>`); tabla = []; };
+  for (const l of filas) {
+    if (/^\s*\|/.test(l)) { tabla.push(l.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim())); continue; }
+    cerrarTabla();
+    if (/^#{1,3} /.test(l)) out.push(`<h3 style="margin:10px 0 2px;font-size:15px">${enLinea(l.replace(/^#+ /, ""))}</h3>`);
+    else if (/^\s*[-*] /.test(l)) out.push(`<div style="padding-left:14px">• ${enLinea(l.replace(/^\s*[-*] /, ""))}</div>`);
+    else if (l.trim()) out.push(`<p style="margin:0;line-height:1.6;color:var(--suave)">${enLinea(l)}</p>`);
+  }
+  cerrarTabla();
+  return out.join("");
+}
+
+function curlDe(paso) {
+  const q = (s) => `'${String(s).replace(/'/g, "'\\''")}'`;
+  const partes = [`curl -X ${paso.metodo || "GET"} ${q(paso.url || "")}`];
+  for (const [k, v] of Object.entries(paso.cabeceras || {})) partes.push(`-H ${q(`${k}: ${v === "•••" ? `<${k}>` : v}`)}`);
+  if (paso.enviado) partes.push(`--data-raw ${q(paso.enviado)}`);
+  return partes.join(" \\\n  ");
+}
+
+function seccionPruebas(x) {
+  if ((x.destino || "") !== "release") return "";
+  const local = S.plan[x.id] || {}, estadoLocal = (S.datos.planes || {})[x.id] || {};
+  const p = local.plan ? local : (x.pruebas ? { ...x.pruebas, estado: "hecho" } : local);
+  const estado = local.estado || estadoLocal.estado || (x.pruebas ? "hecho" : "");
+  const dic = p.dictamen, plan = p.plan || {}, eje = p.ejecucion || {};
+  const res = Object.fromEntries((eje.escenarios || []).map((e) => [e.id, e]));
+  const dEsc = Object.fromEntries(((dic || {}).escenarios || []).map((e) => [e.id, e]));
+  const vivo = ["pendiente", "armando", "listo", "ejecutando", "evaluando", "dictando", "corrigiendo"].includes(estado);
+  const textos = { pendiente: "En cola en tu worker.", armando: "Tu Claude lee el código de master, la BD de ci y elige tus usuarios.", listo: "Plan listo: arranca la ejecución.",
+    ejecutando: "Ejecutando los escenarios contra ci.", evaluando: "Esperando el dictamen.", dictando: "Tu Claude revisa el log y confirma cada falla con el código.", corrigiendo: "Ejecutando otra vez con la corrección." };
+  const tono = (r) => ({ pasa: "c-ok", falla: "c-bad", no_ejecutado: "c-warn", no_ejecutable: "c-warn", no_preparado: "c-warn", invalido: "c-warn" }[r] || "c-off");
+  const hist = (x.pruebas_hist || []);
+  const antesDespues = (e) => {
+    if (!e.idor) return "";
+    const corridas = hist.map((h) => ({ h, r: ((h.dictamen || {}).escenarios || []).find((y) => y.id === e.id), l: ((h.ejecucion || {}).escenarios || []).find((y) => y.id === e.id) })).filter((c) => c.r);
+    const antes = corridas.find((c) => c.r.resultado === "falla"), despues = [...corridas].reverse().find((c) => c.r.resultado === "pasa");
+    if (!antes || !despues || antes === despues) return "";
+    const lado = (c, t, clr) => { const paso = (c.l && (c.l.pasos || []).filter((y) => y.tipo === "prueba").pop()) || {}; return `<div class="caja" style="gap:6px;border-color:${clr}"><b>${t}</b><span class="mono" style="font-size:12px;color:var(--tenue)">commit ${esc(c.h.commit || "?")} · ${esc(paso.status ?? "")}</span>${jsonBonito(paso.respuesta || "")}</div>`; };
+    return `<div class="dos">${lado(antes, "Antes · con el hallazgo", "rgba(234,88,111,.5)")}${lado(despues, "Después · con la corrección", "rgba(1,209,150,.5)")}</div>`;
+  };
+  const pasoHtml = (e, pl, i) => {
+    const clave = `${x.id}:${e.id}:${i}`, abierto = S.abiertos.has(`paso:${clave}`);
+    const st = pl.status != null ? `<span class="chip mono ${pl.ok ? "c-ok" : "c-bad"}">${esc(pl.status)}</span>` : pl.error ? `<span class="chip c-bad">error</span>` : "";
+    return `<div style="border:1px solid var(--linea);border-radius:10px;overflow:hidden">
+      <button class="fila" data-plegar="paso:${esc(clave)}" aria-expanded="${abierto}" style="border-top:0;gap:10px"><span class="mono" style="color:var(--tenue-2)">${i + 1}.</span><span class="chip c-off">${esc(pl.tipo || "")}</span><span class="mono" style="color:var(--warn-t)">${esc(pl.metodo || "")}</span>
+        <span style="display:flex;flex-direction:column;flex:1;min-width:0"><span class="mono" style="font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(String(pl.url || "").replace(/^https?:\/\/[^/]+/, ""))}</span><span style="font-size:12px;color:var(--tenue-2)">${esc(pl.nombre || "")}</span></span>
+        ${pl.via ? `<span class="chip c-info">por ${esc(pl.via === "gateway" ? "gateway" : pl.via === "admin" ? "backoffice" : "lb-ci")}</span>` : ""}${pl.usuario ? `<span style="font-size:12px;color:var(--tenue)">usuario ${esc(pl.usuario)}</span>` : ""}${pl.ms != null ? `<span class="mono" style="font-size:12px;color:var(--tenue)">${esc(pl.ms)} ms</span>` : ""}${st}</button>
+      ${abierto ? `<div style="padding:12px 14px;display:flex;flex-direction:column;gap:10px;border-top:1px solid var(--linea-2)">
+        ${(pl.checks || []).length ? `<div class="barra"><span class="rot">Chequeos</span>${pl.checks.map((c) => `<span class="chip mono ${c.ok ? "c-ok" : "c-bad"}">${esc(c.que)}: ${esc(JSON.stringify(c.espera))} → ${esc(JSON.stringify(c.obtuvo))}</span>`).join("")}</div>` : ""}
+        ${pl.error ? `<div class="aviso c-bad">${esc(pl.error)}</div>` : ""}
+        <div class="dos">
+          <div class="caja" style="gap:8px;padding:0;overflow:hidden"><div class="barra" style="padding:8px 10px;background:var(--hondo)"><b>Enviado</b><span style="flex:1"></span>${pl.metodo !== "SQL" ? `<button class="btn" data-copiar="${esc(curlDe(pl))}">cURL</button>` : ""}</div>
+            <div style="padding:0 10px 10px">${Object.entries(pl.cabeceras || {}).filter(([k]) => k !== "accept").map(([k, v]) => `<div class="mono" style="font-size:12px"><span style="color:var(--tenue-2)">${esc(k)}</span> ${esc(v)}</div>`).join("")}${pl.enviado ? jsonBonito(pl.enviado) : pl.metodo === "SQL" ? `<pre style="margin:0">${esc(pl.url)}</pre>` : ""}</div></div>
+          <div class="caja" style="gap:8px;padding:0;overflow:hidden"><div class="barra" style="padding:8px 10px;background:var(--hondo)"><b>Recibido</b>${st}<span style="flex:1"></span><button class="btn" data-copiar="${esc(pl.respuesta || "")}">Copiar</button></div>
+            <div style="padding:0 10px 10px">${jsonBonito(pl.respuesta || "")}</div></div>
+        </div></div>` : ""}
+    </div>`;
+  };
+  const escenario = (e) => {
+    const r = res[e.id] || {}, de = dEsc[e.id] || {}, resultado = de.resultado || r.resultado || (e.ejecutable === false ? "no_ejecutable" : "");
+    const clave = `esc:${x.id}:${e.id}`, abierto = S.abiertos.has(clave);
+    return `<div style="border:1px solid ${abierto ? "var(--linea-3)" : "var(--linea)"};border-radius:10px;overflow:hidden">
+      <button class="fila" data-plegar="${esc(clave)}" aria-expanded="${abierto}" style="border-top:0">${CHEVRON.replace("<svg", `<svg style="transform:rotate(${abierto ? 0 : -90}deg)"`)}<span class="chip ${e.tipo === "seguridad" ? "c-nar" : e.tipo === "feliz" ? "c-ok" : e.tipo === "error" ? "c-bad" : "c-off"}">${esc(e.tipo)}</span>${e.idor ? `<span class="chip c-bad">IDOR</span>` : ""}<b style="font-weight:500;flex:1">${esc(e.nombre)}</b>
+        ${e.si_falla ? `<span class="chip ${e.si_falla === "critico" ? "c-bad" : e.si_falla === "medio" ? "c-warn" : "c-off"}" style="background:none;border-color:currentColor">si falla: ${esc(e.si_falla)}</span>` : ""}${resultado ? `<span class="chip ${tono(resultado)}">${esc(resultado.replace(/_/g, " "))}</span>` : ""}</button>
+      ${abierto ? `<div style="padding:14px 16px;display:flex;flex-direction:column;gap:10px;border-top:1px solid var(--linea-2)">
+        <p style="margin:0;color:var(--suave);line-height:1.5">${esc(e.objetivo || "")}</p>
+        ${e.ejecutable === false ? `<div class="aviso c-warn">${esc(e.motivo || "No ejecutable")}</div>` : ""}
+        ${de.explicacion ? `<p style="margin:0;line-height:1.5"><b style="font-weight:500">Dictamen:</b> ${esc(de.explicacion)}</p>` : ""}
+        ${antesDespues(e)}
+        ${(r.pasos || []).map((pl, i) => pasoHtml(e, pl, i)).join("")}</div>` : ""}
+    </div>`;
+  };
+  const chat = (local.chat || []);
+  const burbuja = (m) => m.rol === "dev"
+    ? `<div style="align-self:flex-end;max-width:78%;background:var(--primario);color:#fff;border-radius:12px 12px 4px 12px;padding:10px 14px;white-space:pre-wrap">${esc(m.texto)}</div>`
+    : `<div style="align-self:flex-start;max-width:86%;background:var(--caja);border:1px solid var(--linea);border-radius:12px 12px 12px 4px;padding:12px 14px;display:flex;flex-direction:column;gap:8px"><span style="white-space:pre-wrap">${esc(m.texto)}</span>${m.meta && m.meta.cambio ? `<span class="chip c-acc" style="align-self:flex-start">corrección de datos${m.meta.repetir ? ` · ${esc(m.meta.repetir.join(", "))}` : ""}</span>` : ""}${m.meta && m.meta.rechazado ? `<span class="chip c-bad" style="align-self:flex-start">no aplicado: ${esc(m.meta.rechazado)}</span>` : ""}</div>`;
+  const falta = (S.datos.estado || {}).falta_pruebas;
+  return `<section class="caja" style="gap:14px">
+    <div class="barra"><span class="rot">Plan de pruebas · ci · corre en tu máquina</span><span style="flex:1"></span>
+      ${dic ? `<span class="chip ${dic.veredicto === "pasa" ? "c-ok" : dic.veredicto === "no_pasa" ? "c-bad" : "c-warn"}">${esc(String(dic.veredicto || "").replace(/_/g, " "))}</span><b class="mono">${esc(dic.puntaje ?? "—")}/10</b>` : ""}
+      ${local.plan || estado === "falta_config" || estado === "error" ? `<button class="btn" data-plan-otra="${x.id}" ${vivo ? "disabled" : ""}>${local.plan ? "Ejecutar todo otra vez" : "Intentar de nuevo"}</button>` : ""}</div>
+    ${vivo ? `<div class="aviso c-acc">${esc(textos[estado] || estado)}</div>` : ""}
+    ${estado === "falta_config" || (!estado && falta) ? `<div class="aviso c-warn">${esc(falta || local.error)}. <button class="btn" data-accion="config">Configurar</button></div>` : ""}
+    ${local.error && estado !== "falta_config" ? `<div class="aviso c-bad">${esc(local.error)}</div>` : ""}
+    ${!estado && !falta ? `<span style="color:var(--tenue)">Se arma solo cuando el análisis de este PR a release termina en tu worker.</span>` : ""}
+    ${dic ? `${(dic.hallazgos || []).map((h) => `<div class="aviso ${h.severidad === "critico" ? "c-bad" : "c-warn"}"><b>${esc(h.severidad)}: ${esc(h.titulo)}</b><br>${esc(h.evidencia || "")}${h.recomendacion ? `<br><span style="color:var(--suave)">${esc(h.recomendacion)}</span>` : ""}</div>`).join("") || `<div class="aviso c-ok">Sin hallazgos.</div>`}
+      ${dic.documento ? `<details><summary style="cursor:pointer" class="barra"><b>Documento del dictamen</b><span style="flex:1"></span><button class="btn" data-descargar-md="${x.id}">Descargar .md</button></summary><article style="padding-top:8px">${md(dic.documento)}</article></details>` : ""}` : ""}
+    ${plan.resumen ? `<span class="rot">Qué se prueba</span><p style="margin:0;color:var(--suave);line-height:1.6">${esc(plan.resumen)}</p>` : ""}
+    ${(plan.escenarios || []).length ? `<span class="rot">Escenarios · ${plan.escenarios.length}</span>${plan.escenarios.map(escenario).join("")}` : ""}
+    ${(plan.no_cubierto || []).length ? `<span class="rot">No cubierto</span><ul style="margin:0;padding-left:18px;color:var(--suave)">${plan.no_cubierto.map((n) => `<li>${esc(n)}</li>`).join("")}</ul>` : ""}
+    ${local.plan ? `<div style="border:1px solid var(--linea-3);border-radius:10px;overflow:hidden"><div style="padding:12px 14px;background:var(--hondo)"><b>Corregir datos del plan</b><div style="font-size:12.5px;color:var(--tenue)">Chat con el mismo Claude que armó el plan, para cuando un escenario falla por un dato: la URL, la vía, una cabecera, un parámetro, un id. Aquí se corrige cómo se prueba, nunca qué se espera.</div></div>
+      <div style="padding:12px 14px;display:flex;flex-direction:column;gap:10px">${chat.map(burbuja).join("")}${S.pensando === `plan:${x.id}` ? `<span class="chip c-acc" style="align-self:flex-start">revisando el código y el plan…</span>` : ""}
+      <div style="display:flex;gap:10px;align-items:flex-end"><label for="msg-plan" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">Qué dato está mal</label><textarea id="msg-plan" rows="2" style="flex:1" placeholder="Qué dato está mal: URL, vía, cabecera, parámetro, id…"></textarea><button class="btn prim" data-plan-chat="${x.id}" ${S.pensando || vivo ? "disabled" : ""}>Enviar</button></div>
+      <span style="font-size:12px;color:var(--tenue-2)">Un status o una respuesta que el código no debería dar no se vuelve correcta aquí. Desde el panel no se puede marcar un escenario como válido.</span></div></div>` : ""}
+  </section>`;
+}
+
+async function cargarCajon(id) {
+  const x = (S.datos.analisis || []).find((a) => String(a.id) === String(id));
+  if (!x) return;
+  const [plan, deb] = await Promise.all([(x.destino || "") === "release" ? api(`/api/plan/${id}`) : Promise.resolve(null), api(`/api/debate/${id}`)]);
+  if (plan) S.plan[id] = plan;
+  if (deb) S.debate[id] = deb.chat || [];
+  if (String(S.cajon) === String(id)) pintar();
+}
+
+function cajon() {
+  const x = (S.datos.analisis || []).find((a) => String(a.id) === String(S.cajon));
+  if (!x) return "";
+  const d = datosDe(x) || {}; const h = (S.datos.historias || {})[x.historia];
+  const crit = Number(d.criticas || 0), p = d.puntaje;
+  const freno = bloqueo(d) || frenoPruebas(x);
+  const puedeEnviar = x.estado === "v3_analizado" && !freno;
+  const bajo = p != null && p < 80;
+  const banda = x.estado === "v3_analizado"
+    ? (freno ? ["rgba(234,88,111,.08)", "rgba(234,88,111,.35)", "var(--bad-t)", `No se puede entregar: ${freno}. Corrige y vuelve a analizar.`]
+      : ["rgba(1,209,150,.08)", "rgba(1,209,150,.3)", "var(--ok)", "Listo para entregar a Hodor."])
+    : ["rgba(129,152,214,.08)", "rgba(129,152,214,.3)", "var(--info)", ""];
+  const loc = (S.datos.locales || []).includes(String(x.pr));
+  const hall = d.hallazgos || [];
+  const esc3 = (d.funcional && d.funcional.escenarios) || [];
+  const sevChip = (s) => `<span class="chip ${s === "critica" ? "c-bad" : s === "alta" ? "c-nar" : s === "media" ? "c-warn" : "c-off"}">${esc(s)}</span>`;
+  const tipoChip = (t) => `<span class="chip ${t === "feliz" ? "c-ok" : t === "error" ? "c-bad" : "c-info"}">${esc(t)}</span>`;
+  const costo = x.costo || {};
+  return `<div class="fondo-cajon" data-cerrar></div>
+  <aside class="cajon" role="dialog" aria-modal="true" aria-label="Análisis de ${esc(x.repo)} #${esc(x.pr)}">
+    <div style="display:flex;align-items:flex-start;gap:14px">
+      <div style="display:flex;flex-direction:column;gap:6px;flex:1;min-width:0">
+        <span class="rot">REV/${esc(x.id)} · ${esc(x.historia || "sin historia")} · ${esc(x.destino || amb(x))}</span>
+        <h2 style="margin:0;font-size:22px;font-weight:600;letter-spacing:-0.01em">${esc(x.repo)} <span class="mono" style="color:var(--tenue);font-weight:400">#${esc(x.pr)}</span></h2>
+        <span style="color:var(--suave)">${esc(h ? `${h.clave} · ${h.titulo}` : x.rama)}</span>
+      </div>
+      <button class="icono" data-cerrar aria-label="Cerrar" style="width:40px;height:40px">✕</button>
+    </div>
+    <div class="banda" style="background:${banda[0]};border:1px solid ${banda[1]}">
+      <div style="display:flex;align-items:baseline;gap:6px"><span class="mono" style="font-size:40px;font-weight:500;line-height:1;color:${colorPuntaje(p)}">${p ?? "—"}</span><span class="mono" style="color:var(--tenue)">/100</span></div>
+      <div style="display:flex;flex-direction:column;gap:4px;flex:1;min-width:220px">
+        <b style="color:${banda[2]}">${esc(estadoPr(x)[0])}</b>
+        <span style="color:var(--suave);font-size:13px">${d.criticas ?? 0} críticas · ${d.altas ?? 0} altas · ${d.medias ?? 0} medias · ${d.bajas ?? 0} bajas${x.commit ? ` · commit <span class="mono">${esc(x.commit.slice(0, 8))}</span>` : ""}. ${esc(banda[3])}</span>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+        <button class="btn ${puedeEnviar ? "ok" : ""}" data-enviar="${x.id}" ${puedeEnviar ? "" : "disabled"}>${x.entregado ? "Entregado a Hodor ✓" : "Entregar a Hodor"}</button>
+        ${puedeEnviar ? "" : `<span style="font-size:12px;color:var(--tenue)">${esc(x.entregado ? "Hodor ya lo tiene" : freno ? freno : ["pendiente", "v3", "corriendo"].includes(x.estado) ? "espera a que termine el análisis" : x.estado === "superada" ? "analízalo de nuevo" : "vuelve a analizarlo para enviarlo")}</span>`}
+      </div>
+    </div>
+    <div class="barra">
+      <button class="btn ${freno ? "prim" : ""}" data-terminal="${esc(x.pr)}" data-repo="${esc(x.repo)}" data-rama="${esc(x.rama || "")}" ${loc ? "" : "title=\"El análisis no está en esta máquina\""}>Abrir en terminal con Claude</button>
+      <button class="btn" data-pedir="${esc(x.url)}">Volver a analizar</button>
+      <a class="btn fant" style="text-decoration:none;color:var(--acc-t)" href="${esc(x.url)}" target="_blank" rel="noopener">Ver en CodeCommit ↗</a>
+      <span style="flex:1"></span>
+      ${costo.usd != null ? `<span class="mono" style="font-size:12px;color:var(--tenue-2)">${esc(costo.modelo || "")} · ${esc(costo.turnos ?? "?")} turnos · ${esc(costo.segundos ?? "?")} s · USD ${Number(costo.usd).toFixed(2)}</span>` : ""}
+    </div>
+    ${d.resumen ? `<section class="caja" style="background:none;border:0;padding:0"><span class="rot">Resumen</span><p style="margin:0;line-height:1.6">${esc(d.resumen)}</p></section>` : `<p style="color:var(--tenue)">${x.estado === "v3" || x.estado === "corriendo" ? "Tu worker lo está analizando…" : "Esperando el análisis…"}</p>`}
+    ${x.reglas && Object.keys(x.reglas.ramas || {}).length ? `<section class="caja" style="${x.reglas.ok ? "" : "background:rgba(234,88,111,.07);border-color:rgba(234,88,111,.35)"}">
+      <span class="rot" style="${x.reglas.ok ? "" : "color:var(--bad-t)"}">Reglas de ramas · ${x.reglas.destino === "release" ? "a release solo entra lo que ya está en master y development" : "a master solo entra lo que ya está en development"}</span>
+      ${Object.entries(x.reglas.ramas).map(([rama, r]) => `<div style="display:flex;flex-direction:column;gap:4px"><span>${r.ok ? `<span class="chip c-ok">✓ ${esc(rama)}</span> todo el código ya está en ${esc(rama)}` : `<span class="chip c-bad">✕ ${esc(rama)}</span> ${r.completo ? `falta código en ${esc(rama)}` : `no pude comparar todo contra ${esc(rama)}`}`}</span>
+        ${(r.faltan || []).map((f) => `<span class="mono" style="font-size:12px;color:var(--bad-t);padding-left:8px">${esc(f.ruta)}${f.lineas ? ` · ${esc(f.lineas)} línea(s)` : ""}${f.motivo ? ` · ${esc(f.motivo)}` : ""}</span>`).join("")}</div>`).join("")}
+      ${x.reglas.ok ? "" : `<span style="font-size:13px;color:var(--bad-t)">Si lo envías así, Hodor lo deja esperando hasta que ese código llegue a la rama anterior.</span>`}
+    </section>` : ""}
+    ${d.funcional ? `<div class="dos"><section class="caja"><span class="rot">Qué hace el cambio</span><p style="margin:0;line-height:1.6;color:#d7dbe6">${esc(d.funcional.que_hace)}</p></section>
+      <section class="caja"><span class="rot">A qué afecta</span><ul style="margin:0;padding-left:18px;line-height:1.6;color:#d7dbe6">${(d.funcional.afecta || []).map((a) => `<li>${esc(a)}</li>`).join("")}</ul></section></div>` : ""}
+    ${seccionHallazgos(x, d)}
+    ${seccionDebate(x, d)}
+    ${seccionPruebas(x)}
+    ${esc3.length ? `<section style="display:flex;flex-direction:column;gap:8px"><span class="rot">Escenarios de prueba · pruébalo antes de enviar</span>
+      <div style="border:1px solid var(--linea);border-radius:10px;overflow:auto"><table><tr><th>Escenario</th><th>Tipo</th><th>Petición o cómo se prueba</th><th style="text-align:right">Espera</th></tr>
+      ${esc3.map((e) => `<tr><td>${esc(e.nombre)}</td><td>${tipoChip(e.tipo)}</td><td>${e.metodo ? `<span class="mono">${esc(e.metodo)} ${esc(e.ruta)}</span>` : ""}${e.precondicion ? `<div style="color:var(--suave)">${esc(e.precondicion)}</div>` : ""}</td><td class="mono" style="text-align:right">${e.espera_status || "—"}</td></tr>`).join("")}</table></div></section>` : ""}
+    ${(d.preguntas || []).length || d.despliegue ? `<div class="dos">
+      ${(d.preguntas || []).length ? `<section class="caja" style="background:rgba(252,201,86,.07);border-color:rgba(252,201,86,.3)"><span class="rot" style="color:var(--warn-t)">Preguntas para confirmar</span><ul style="margin:0;padding-left:18px;line-height:1.6;color:var(--warn-t)">${d.preguntas.map((q) => `<li>${esc(q)}</li>`).join("")}</ul></section>` : ""}
+      ${d.despliegue ? `<section class="caja"><span class="rot">Orden de despliegue</span><p style="margin:0;line-height:1.6;color:#d7dbe6">${esc(d.despliegue)}</p></section>` : ""}</div>` : ""}
+    ${x.final ? `<details><summary class="rot" style="cursor:pointer">Análisis completo</summary><pre>${esc(x.final)}</pre></details>` : ""}
+  </aside>`;
+}
+
+function vistaConfig() {
+  const e = S.datos ? S.datos.estado || {} : {}, pr = e.pruebas || {};
+  const pasos = [
+    ["Carpeta de repos", !!e.repos, e.repos ? "configurada" : "falta"],
+    ["Jira", !!e.jira, e.jira ? "token probado" : "falta"],
+    ["Base de datos ci", !!pr.bd, pr.bd ? "conectada" : "falta"],
+    ["Usuarios de prueba ci", (pr.empresas || 0) >= 2, `${(pr.usuarios || []).length} usuario(s) · ${pr.empresas || 0} empresa(s)`],
+    ["Backoffice ci", !!pr.bo, pr.bo ? "llaves probadas" : "falta"],
+  ];
+  const nav = pasos.map(([n, ok, sub], i) => `<button class="fila" data-paso="${i + 1}" style="border-top:0;border-radius:8px;${S.paso === i + 1 ? "background:var(--sel)" : ""}">
+      <span class="mono" style="width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font-size:13px;${ok ? "background:rgba(1,209,150,.16);color:var(--ok)" : S.paso === i + 1 ? "background:var(--primario);color:#fff" : "border:1px solid var(--linea-3);color:var(--tenue)"}">${ok ? "✓" : i + 1}</span>
+      <span style="display:flex;flex-direction:column"><span>${n}</span><span style="font-size:12px;color:var(--tenue-2)">${esc(sub)}</span></span></button>`).join("");
+  const guia = (pasosG) => `<div class="caja" style="background:var(--hondo)"><b style="color:var(--acc-t)">Cómo conseguirlo</b><ol style="margin:0;padding-left:20px;color:var(--suave);line-height:1.6">${pasosG.map((p) => `<li>${p}</li>`).join("")}</ol></div>`;
+  const campo = (id, rot, val, tipo, ph) => `<div class="campo"><label for="${id}">${rot}</label><input id="${id}" ${tipo ? `type="${tipo}"` : ""} value="${esc(val || "")}" placeholder="${esc(ph || "")}"></div>`;
+  let cuerpo = "";
+  if (S.paso === 1) cuerpo = `<b style="font-size:18px">¿Dónde tienes tus repos?</b>
+      <span style="color:var(--tenue);font-size:13px">Para abrir la terminal con Claude en el repo de cada PR y para que el plan de pruebas lea el código de master. Busco cada repo por su nombre dentro de esta carpeta.</span>
+      ${campo("c-repos", "Carpeta de tus repos", e.repos, "", "C:\\Users\\tu-usuario\\code")}`;
+  else if (S.paso === 2) cuerpo = `<b style="font-size:18px">Conecta tu Jira</b>
+      ${guia([`Entra a <a href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank" rel="noopener">id.atlassian.com → Security → API tokens</a>.`, "Crea un token con el nombre «Hodor v3» y cópialo.", "Pega tu correo de Jira y el token, y toca Probar y guardar."])}
+      ${campo("c-jmail", "Correo de Jira", e.jira_email, "", "tu.nombre@global66.com")}
+      ${campo("c-jtok", "Token de Jira", "", "password", e.jira ? "ya configurado · déjalo vacío para no cambiarlo" : "pega tu token")}`;
+  else if (S.paso === 3) cuerpo = `<b style="font-size:18px">Base de datos de ci</b>
+      <span style="color:var(--tenue);font-size:13px">Los pasos SQL del plan de pruebas verifican lo que quedó guardado. Sin esto, el plan no se arma.</span>
+      ${guia(["Usa tu usuario de la BD de ci (el mismo con el que consultas ci).", "Conecta la VPN: sin ella la prueba se queda esperando y falla por tiempo.", "Pega host, puerto, usuario y contraseña, y toca Probar y guardar."])}
+      <div class="dos">${campo("c-bhost", "Host", pr.bd_host, "", "host de la BD de ci")}${campo("c-bpuerto", "Puerto", pr.bd_puerto || "3306", "", "3306")}${campo("c-busr", "Usuario", pr.bd_usuario, "", "tu usuario de la BD de ci")}${campo("c-bpass", "Contraseña", "", "password", pr.bd ? "ya guardada · vacía para no cambiarla" : "")}</div>
+      <span style="font-size:12.5px;color:var(--tenue-2)">El plan solo lee: acepta únicamente SELECT, SHOW, DESCRIBE y EXPLAIN, y cada consulta corre en una sesión de solo lectura, así que MySQL rechaza cualquier escritura aunque tu usuario pueda escribir.</span>`;
+  else if (S.paso === 4) cuerpo = `<b style="font-size:18px">Usuarios de prueba de ci</b>
+      <span style="color:var(--tenue);font-size:13px">Con estos usuarios se ejecutan los escenarios. Hacen falta de <b>dos empresas distintas</b>: así el plan prueba que un usuario no ve datos de otra empresa (IDOR).</span>
+      ${guia(["Usa tus usuarios B2B de prueba en ci (empresas-test.global66.com). Si no tienes, pídelos al equipo.", "Pega el correo, la contraseña y el código OTP de ci de cada uno y toca Agregar: entro con él y te muestro su empresa y nivel.", "La contraseña va al llavero de tu sistema; nunca sale de tu máquina."])}
+      ${(pr.usuarios || []).length ? `<div style="border:1px solid var(--linea);border-radius:10px;overflow:auto"><table><tr><th>Usuario</th><th>Empresa</th><th>Nivel</th><th></th></tr>${pr.usuarios.map((u) => `<tr><td class="mono">${esc(u.email)}</td><td>${esc(u.empresa || "—")}${u.company_id ? ` <span class="mono" style="color:var(--tenue-2)">#${esc(u.company_id)}</span>` : ""}${u.error ? ` <span class="chip c-bad">${esc(u.error)}</span>` : ""}</td><td>${esc(u.nivel || "")}</td><td style="text-align:right"><button class="btn fant" data-borrar-usuario="${esc(u.id)}">Quitar</button></td></tr>`).join("")}</table></div>` : ""}
+      <div class="dos">${campo("c-uemail", "Correo", "", "", "usuario de prueba de ci")}${campo("c-upass", "Contraseña", "", "password", "")}${campo("c-uotp", "Código OTP de ci", "", "password", "el código fijo de ese usuario en ci")}</div>`;
+  else cuerpo = `<b style="font-size:18px">Backoffice de ci</b>
+      <span style="color:var(--tenue);font-size:13px">Para los escenarios de rutas /admin/ y /bo/. Las llaves van al llavero de tu sistema y el plan las pone sin mostrarlas.</span>
+      ${guia(["Pide tu KNOWN-TOKEN-KEY y tu ADMIN-TOKEN-KEY de ci al equipo de backend.", "Pégalas y toca Probar y guardar: llamo una ruta de lectura del backoffice de ci.", "Necesitas la VPN prendida."])}
+      <div class="dos">${campo("c-ktk", "KNOWN-TOKEN-KEY", "", "password", pr.bo ? "ya guardada · vacía para no cambiarla" : "")}${campo("c-at", "ADMIN-TOKEN-KEY", "", "password", pr.bo ? "ya guardada · vacía para no cambiarla" : "")}</div>`;
+  const acciones = { 1: ["paso-repos", "Guardar y seguir"], 2: ["paso-jira", "Probar y guardar"], 3: ["paso-bd", "Probar y guardar"], 4: ["paso-usuario", "Agregar"], 5: ["paso-bo", "Probar y guardar"] }[S.paso];
+  return `<div class="modal"><div role="dialog" aria-modal="true" aria-label="Configuración" style="max-width:920px;flex-direction:row;flex-wrap:wrap;gap:20px">
+    <nav aria-label="Pasos" style="flex:1 1 240px;display:flex;flex-direction:column;gap:4px">${nav}
+      <div style="font-size:12.5px;color:var(--tenue);line-height:1.5;padding:10px">Sin los pasos 3 a 5 puedes analizar PRs a development y master, pero <b style="color:var(--warn-t)">no puedes entregar un PR a producción</b>: necesita el plan de pruebas en ci. Todo queda en tu máquina.</div></nav>
+    <section style="flex:999 1 420px;min-width:0;display:flex;flex-direction:column;gap:14px">${cuerpo}
+      <div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">
+        <button class="btn fant" data-accion="cerrar-config">Cerrar</button>
+        ${S.paso > 1 ? `<button class="btn fant" data-paso="${S.paso - 1}">Atrás</button>` : ""}
+        ${S.paso < 5 ? `<button class="btn fant" data-paso="${S.paso + 1}">Saltar</button>` : ""}
+        <button class="btn prim" data-accion="${acciones[0]}">${acciones[1]}</button>
+      </div></section>
+  </div></div>`;
+}
+
+function pintar() {
+  const app = document.getElementById("app");
+  const foco = document.activeElement && document.activeElement.matches("[data-busca]");
+  if (!S.datos) { app.innerHTML = `<p class="vacio">Cargando…</p>`; return; }
+  if (S.datos.error) { app.innerHTML = `${cabecera()}<main><div class="aviso c-bad" style="margin-top:24px">${esc(S.datos.error)}</div></main>`; return; }
+  const d = S.datos;
+  const analizados = new Set((d.analisis || []).map((x) => String(x.pr)));
+  const nDet = (d.detectados || []).filter((x) => !analizados.has(String(x.pr))).length;
+  const nMis = new Set(porHistoria().map((x) => x.historia)).size;
+  app.innerHTML = `${cabecera()}${hero()}
+    <main>
+      <nav class="tabs" aria-label="Secciones">
+        <button class="${S.tab === "mis" ? "on" : ""}" data-tab="mis">Mis PRs<span class="n">${nMis}</span></button>
+        <button class="${S.tab === "det" ? "on" : ""}" data-tab="det">Detectados<span class="n" style="color:var(--warn)">${nDet}</span></button>
+        <button class="${S.tab === "sug" ? "on" : ""}" data-tab="sug">Sugerencias</button>
+      </nav>
+      ${S.tab === "mis" ? vistaMis() : S.tab === "det" ? vistaDetectados() : vistaSugerencias()}
+    </main>
+    ${S.cajon ? cajon() : ""}
+    ${S.config ? vistaConfig() : ""}`;
+  if (foco) { const b = app.querySelector("[data-busca]"); b.focus(); b.setSelectionRange(b.value.length, b.value.length); }
+}
+
+async function cargar() {
+  try { S.datos = await api("/api/datos"); } catch { S.datos = { error: "no pude hablar con tu worker" }; }
+  if (S.datos && S.datos.estado && !S.datos.estado.configurado && !cargar.mostrado) { S.config = true; cargar.mostrado = true; }
+  pintar();
+}
+
+async function pedir(url) {
+  if (!String(url || "").trim()) return aviso("Pega el link del PR.");
+  const r = await api("/api/pedir", { url });
+  if (r.error) return aviso(r.error);
+  aviso(`#${r.pr}: pedido. Hodor arma el paquete y tu worker lo analiza.`);
+  S.tab = "mis"; cargar();
+}
+
+document.addEventListener("submit", (e) => { const f = e.target.closest("[data-form=pedir]"); if (f) { e.preventDefault(); pedir(f.url.value); } });
+let tBusca;
+document.addEventListener("input", (e) => {
+  if (e.target.matches("[data-busca]")) { clearTimeout(tBusca); tBusca = setTimeout(() => { S.busca = e.target.value; S.pagina = 1; pintar(); }, 250); }
+});
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && (S.cajon || S.menu)) { S.cajon = null; S.menu = ""; pintar(); } });
+document.addEventListener("click", async (e) => {
+  const t = (sel) => e.target.closest(sel);
+  let el;
+  if (S.menu && !t("[data-menu]") && !t(".menu")) { S.menu = ""; pintar(); }
+  if ((el = t("[data-paso]"))) { S.paso = Number(el.dataset.paso); return pintar(); }
+  if ((el = t("[data-borrar-usuario]"))) { await api("/api/config/usuario/borrar", { id: el.dataset.borrarUsuario }); return cargar(); }
+  if ((el = t("[data-tab]"))) { S.tab = el.dataset.tab; S.cajon = null; return pintar(); }
+  if ((el = t("[data-filtro]"))) { S.filtroHu = el.dataset.filtro; S.pagina = 1; return pintar(); }
+  if ((el = t("[data-pag]"))) { S.pagina += Number(el.dataset.pag); return pintar(); }
+  if ((el = t("[data-pagdet]"))) { S.pagDet += Number(el.dataset.pagdet); return pintar(); }
+  if (!t("button,a,.menu") && (el = t(".grupo-cab")) && el.querySelector("[data-plegar]")) { el.querySelector("[data-plegar]").click(); return; }
+  if ((el = t("[data-plegar]"))) { const k = el.dataset.plegar; S.abiertos.has(k) ? S.abiertos.delete(k) : S.abiertos.add(k); return pintar(); }
+  if ((el = t("[data-plegartodos]"))) {
+    const claves = el.dataset.plegartodos === "det"
+      ? [...new Set((S.datos.detectados || []).map((x) => `det:${x.historia || "Sin historia"}`))]
+      : filtrar(S.datos.historias || {}).slice((S.pagina - 1) * POR_PAGINA, S.pagina * POR_PAGINA).map((g) => `mis:${g.hu}`);
+    const abrir = !claves.every((k) => S.abiertos.has(k));
+    claves.forEach((k) => (abrir ? S.abiertos.add(k) : S.abiertos.delete(k))); return pintar();
+  }
+  if ((el = t("[data-menu]"))) { S.menu = S.menu === el.dataset.menu ? "" : el.dataset.menu; return pintar(); }
+  if ((el = t("[data-filtrohu]"))) { S.busca = el.dataset.filtrohu; S.menu = ""; return pintar(); }
+  if ((el = t("[data-archivar]"))) { await api("/api/ocultar", { pr: `hu:${el.dataset.archivar}`, tipo: S.verArchivados ? "" : "archivado" }); S.menu = ""; aviso(S.verArchivados ? "Historia de vuelta en activas." : "Historia archivada. La ves en «Ver archivadas»."); return cargar(); }
+  if ((el = t("[data-abrir]"))) { S.cajon = el.dataset.abrir; pintar(); return cargarCajon(el.dataset.abrir); }
+  if ((el = t("[data-copiar]"))) { try { await navigator.clipboard.writeText(el.dataset.copiar); aviso("Copiado."); } catch { aviso("No pude copiar."); } return; }
+  if ((el = t("[data-descargar-md]"))) {
+    e.preventDefault();
+    const x = (S.datos.analisis || []).find((a) => String(a.id) === el.dataset.descargarMd), pl = S.plan[el.dataset.descargarMd] || {};
+    const doc = ((pl.dictamen || (x && x.pruebas && x.pruebas.dictamen)) || {}).documento || "";
+    const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([doc], { type: "text/markdown" })); a.download = `plan-pruebas-${x ? x.repo + "-" + x.pr : "pr"}.md`; a.click(); return;
+  }
+  if ((el = t("[data-debatir]"))) {
+    const caja = document.getElementById("msg-debate"), mensaje = caja.value.trim(); if (mensaje.length < 3) return aviso("Escribe tu argumento.");
+    const id = el.dataset.debatir; (S.debate[id] ||= []).push({ rol: "dev", texto: mensaje }); S.pensando = `debate:${id}`; pintar();
+    const r = await api("/api/debate", { fila: id, mensaje }); S.pensando = ""; if (r.error) aviso(r.error);
+    await cargar(); return cargarCajon(id);
+  }
+  if ((el = t("[data-plan-chat]"))) {
+    const caja = document.getElementById("msg-plan"), mensaje = caja.value.trim(); if (mensaje.length < 3) return aviso("Escribe qué dato está mal.");
+    const id = el.dataset.planChat; ((S.plan[id] ||= {}).chat ||= []).push({ rol: "dev", texto: mensaje }); S.pensando = `plan:${id}`; pintar();
+    const r = await api("/api/plan/chat", { fila: id, mensaje }); S.pensando = ""; if (r.error) aviso(r.error);
+    return cargarCajon(id);
+  }
+  if ((el = t("[data-plan-otra]"))) { const r = await api("/api/plan/otra-vez", { fila: el.dataset.planOtra }); aviso(r.error || "Va otra vez: mismos escenarios."); await cargar(); return cargarCajon(el.dataset.planOtra); }
+  if ((el = t("[data-cerrar]"))) { S.cajon = null; return pintar(); }
+  if ((el = t("[data-pedir]"))) return pedir(el.dataset.pedir);
+  if ((el = t("[data-ocultar]"))) { await api("/api/ocultar", { pr: el.dataset.ocultar, tipo: el.dataset.tipo }); S.verIgnorados = !el.dataset.tipo; return cargar(); }
+  if ((el = t("[data-tiposug]"))) { S.tipoSug = el.dataset.tiposug; const v = document.getElementById("sug").value; pintar(); document.getElementById("sug").value = v; return; }
+  if ((el = t("[data-terminal]"))) { const r = await api("/api/terminal", { pr: el.dataset.terminal, repo: el.dataset.repo, rama: el.dataset.rama }); return aviso(r.error || `Abrí una terminal en ${r.carpeta}`); }
+  if ((el = t("[data-enviar]"))) {
+    if (!confirm("¿Enviar este PR a Hodor? Pasa por las reglas de siempre y le llega al revisor con tu análisis.")) return;
+    const r = await api("/api/enviar", { id: el.dataset.enviar }); aviso(r.error || "Enviado. Hodor lo toma desde aquí."); return cargar();
+  }
+  if ((el = t("[data-accion]"))) {
+    const a = el.dataset.accion;
+    if (a === "archivados") { S.verArchivados = !S.verArchivados; S.pagina = 1; return pintar(); }
+    if (a === "config") { S.config = true; S.paso = 1; return pintar(); }
+    if (a === "cerrar-config") { S.config = false; return pintar(); }
+    if (a === "paso-repos") { const v = document.getElementById("c-repos").value.trim(); if (v) { const r = await api("/api/config", { repos: v }); if (r.error) return aviso(r.error); } S.paso = 2; return cargar(); }
+    if (a === "paso-jira") {
+      const mail = document.getElementById("c-jmail").value.trim(), tok = document.getElementById("c-jtok").value.trim();
+      const r = await api("/api/config", { ...(mail ? { jira_email: mail } : {}), ...(tok ? { jira_token: tok } : {}), terminar: true });
+      if (r.error) return aviso(`Jira: ${r.error}`);
+      aviso("Jira conectado."); S.paso = 3; return cargar();
+    }
+    if (a === "paso-bd") {
+      const v = (id) => document.getElementById(id).value.trim();
+      aviso("Probando la conexión…");
+      const r = await api("/api/config/bd", { host: v("c-bhost"), puerto: v("c-bpuerto"), usuario: v("c-busr"), password: document.getElementById("c-bpass").value });
+      if (r.error) return aviso(`BD: ${r.error}`);
+      aviso(r.escritura ? "Conectó. Tu usuario también puede escribir, pero el plan solo lo usa para leer." : "Conectó · SELECT 1."); S.paso = 4; return cargar();
+    }
+    if (a === "paso-usuario") {
+      aviso("Entrando con el usuario…");
+      const r = await api("/api/config/usuario", { email: document.getElementById("c-uemail").value.trim(), password: document.getElementById("c-upass").value, otp: document.getElementById("c-uotp").value.trim() });
+      if (r.error) return aviso(r.error);
+      aviso(`Entró: ${r.empresa || "sin empresa"}${r.nivel ? ` · nivel ${r.nivel}` : ""}.`); return cargar();
+    }
+    if (a === "paso-bo") {
+      aviso("Probando las llaves…");
+      const r = await api("/api/config/bo", { ktk: document.getElementById("c-ktk").value.trim(), at: document.getElementById("c-at").value.trim() });
+      if (r.error) return aviso(`Backoffice: ${r.error}`);
+      aviso("Llaves de backoffice probadas."); S.config = false; return cargar();
+    }
+    if (a === "sugerir") {
+      const texto = document.getElementById("sug").value.trim();
+      if (texto.length < 5) return aviso("Escribe un poco más.");
+      const r = await api("/api/sugerencia", { texto, tipo: S.tipoSug });
+      aviso(r.error || "Gracias. Le llegó al revisor."); if (!r.error) return cargar(); return;
+    }
+  }
+});
+cargar();
+setInterval(() => {
+  if (!S.cajon || S.pensando || document.hidden) return;
+  const est = (S.plan[S.cajon] || {}).estado;
+  if (["pendiente", "armando", "listo", "ejecutando", "evaluando", "dictando", "corrigiendo"].includes(est)) cargarCajon(S.cajon);
+}, 5000);
+setInterval(() => { if (!document.hidden && !S.cajon && !S.config && !(document.activeElement && document.activeElement.matches("textarea,input"))) cargar(); }, 20000);
+</script>
+</body>
+</html>
