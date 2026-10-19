@@ -37,7 +37,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "v3-worker 2.3"
+VERSION = "v3-worker 3.0"
 AQUI = Path(__file__).resolve().parent
 
 
@@ -210,7 +210,59 @@ def una_vuelta() -> int:
             hechas += 1
         except Exception as err:  # noqa: BLE001 — se reintenta en la próxima vuelta
             log(f"#{p.get('pr')}: falló: {str(err)[:300]}")
+            reportar_falla(f"análisis de #{p.get('pr')}", err)
     return hechas
+
+
+# ── Fallas y actualización automática ──
+
+_FALLAS: dict = {}
+_OCUPADO = [0]
+CADA_ACTUALIZAR = 30 * 60
+
+
+def reportar_falla(contexto: str, err) -> None:
+    """Lo que falla en esta máquina le llega al revisor (Sistema → Revisión v3), como mucho una vez por hora por contexto."""
+    if VISTA or time.time() - _FALLAS.get(contexto, 0) < 3600:
+        return
+    _FALLAS[contexto] = time.time()
+    try:
+        _api("POST", "/api/v3/sugerencia", {"tipo": "falla", "texto": f"[{VERSION}] {contexto}: {str(err)[:600]}"})
+    except Exception:  # noqa: BLE001 — sin red no hay a quién avisar; queda en el log
+        pass
+
+
+def _git(*args: str, espera: int = 120) -> subprocess.CompletedProcess:
+    repo = str(CONFIG.get("repo_kit") or "")
+    return subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True, timeout=espera,
+                          env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+
+
+def actualizar() -> bool:
+    """Si el repo del kit (el clon de worker-dev desde donde se instaló) tiene una versión nueva, la baja, copia los
+    archivos del worker a esta carpeta y reinicia el proceso. Nunca con un análisis o un plan corriendo."""
+    repo = Path(str(CONFIG.get("repo_kit") or ""))
+    if VISTA or not (repo / ".git").exists() or _OCUPADO[0]:
+        return False
+    try:
+        if _git("fetch", "-q", "origin").returncode != 0:
+            raise RuntimeError("git fetch falló (¿acceso al repo o red?)")
+        local, remoto = _git("rev-parse", "HEAD").stdout.strip(), _git("rev-parse", "@{u}").stdout.strip()
+        if not remoto or local == remoto:
+            return False
+        r = _git("merge", "--ff-only", "@{u}")
+        if r.returncode != 0:
+            raise RuntimeError(f"no pude actualizar el repo (¿cambios locales?): {(r.stderr or r.stdout)[:200]}")
+        for nombre in ARCHIVOS_KIT:
+            if (repo / nombre).exists():
+                shutil.copyfile(repo / nombre, AQUI / nombre)
+    except Exception as err:  # noqa: BLE001
+        log(f"actualizar: {str(err)[:300]}")
+        reportar_falla("actualizar el worker", err)
+        return False
+    log("hay una versión nueva del worker: reinicio para usarla")
+    os.execv(sys.executable, [sys.executable, *sys.argv])
+    return True
 
 
 # ── Datos locales (SQLite en tu máquina) ──
@@ -414,6 +466,14 @@ def _claude(pedido: str, cwd: Path, herramientas: list, prohibido: list | None =
              *(["--disallowedTools", *prohibido] if prohibido else []), *(["--resume", reanudar] if reanudar else [])]
     cwd.mkdir(parents=True, exist_ok=True)
     inicio = time.time()
+    _OCUPADO[0] += 1
+    try:
+        return _claude_correr(orden, cwd, reanudar, espera, inicio)
+    finally:
+        _OCUPADO[0] -= 1
+
+
+def _claude_correr(orden: list, cwd: Path, reanudar: str, espera: int, inicio: float) -> dict:
     proc = subprocess.Popen(orden, cwd=str(cwd), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                             text=True, encoding="utf-8", errors="replace",
                             env={**os.environ, "HODOR_V3_TRABAJO": str(TRABAJO), "HODOR_V3_REPOS": str(CONFIG.get("repos") or "")})
@@ -714,6 +774,7 @@ def plan_vuelta() -> None:
         except Exception as err:  # noqa: BLE001 — queda el error en el panel
             _guardar_plan(fila, estado="error", error=str(err)[:300])
             log(f"plan #{pl.get('pr')}: {str(err)[:300]}")
+            reportar_falla(f"plan de pruebas de #{pl.get('pr')}", err)
 
 
 def rescatar_planes() -> None:
@@ -944,7 +1005,9 @@ def main() -> int:
         return 0
     log(f"{VERSION} arrancó · {API}")
     rescatar_planes()
+    actualizar()
     con_panel = servir_panel()
+    revisado = time.time()
     while True:
         if not con_panel:
             con_panel = servir_panel()
@@ -954,6 +1017,10 @@ def main() -> int:
             limpiar_sesiones()
         except Exception as err:  # noqa: BLE001
             log(f"vuelta: {str(err)[:300]}")
+            reportar_falla("vuelta del worker", err)
+        if time.time() - revisado > CADA_ACTUALIZAR:
+            revisado = time.time()
+            actualizar()
         time.sleep(15)
 
 
