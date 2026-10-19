@@ -26,19 +26,34 @@ cd worker-dev
 
 La guía completa, con la configuración del plan de pruebas, está en `guias/windows.md` y `guias/mac.md`.
 
-## Actualizar
+## WSL
 
-Dentro de la carpeta `worker-dev`:
+Si trabajas dentro de WSL (tu código, git y `claude` viven en Linux), instala todo dentro de WSL con `instalar.sh`:
 
 ```bash
-git pull
+git clone https://github.com/IanDex/worker-dev.git
+cd worker-dev
+cp config.ejemplo.json config.json   # y pega tu token
+chmod +x instalar.sh && ./instalar.sh
 ```
 
-Y vuelve a correr el instalador. Reemplaza el código y conserva tu token, tu configuración, tus análisis y tu base local
-(`~/.hodor-v3`).
+- Python, `claude` (con tu sesión iniciada en WSL) y git corren dentro de WSL.
+- Si tu WSL tiene systemd, el worker queda como servicio y arranca solo; si no, arranca cada vez que abres la terminal
+  de WSL.
+- El panel se abre en el navegador de Windows: http://127.0.0.1:7788.
+- «Abrir en terminal con Claude» abre Windows Terminal en tu WSL, dentro del repo del PR.
+- En el paso 1 de la configuración, la carpeta de tus repos es la de Linux (por ejemplo `~/code`).
 
-No modifiques los archivos del worker: Hodor verifica la huella de la versión instalada y rechaza los análisis de un
-kit que no coincide.
+## Actualizar
+
+No tienes que hacer nada: desde la 3.0 el worker revisa cada 30 minutos si hay una versión nueva en este repo. Si la hay,
+hace `git pull`, copia los archivos y se reinicia solo (nunca en medio de un análisis). Por eso:
+
+- Deja la carpeta `worker-dev` donde la clonaste: el worker la usa para actualizarse.
+- No modifiques sus archivos: Hodor verifica la huella de la versión instalada y rechaza los análisis de un kit que no
+  coincide, y con cambios locales el `git pull` no se puede hacer.
+
+Si algo falla al actualizarse o al analizar, el revisor lo ve en su panel.
 
 ## Cómo saber que funciona
 

@@ -16,6 +16,7 @@ import base64
 import json
 import os
 import re
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -92,15 +93,23 @@ def _dpapi(datos: bytes, cifrar: bool) -> bytes:
 
 
 def guardar_secreto(clave: str, valor: str) -> None:
-    """macOS: Keychain. Windows: cifrado con DPAPI (solo tu usuario de Windows lo descifra). Otro sistema: la base local."""
+    """macOS: Keychain. Windows: cifrado con DPAPI (solo tu usuario de Windows lo descifra). Linux/WSL: secret-tool si
+    hay llavero; si no, la base local con permisos solo para tu usuario."""
     if sys.platform == "darwin":
         subprocess.run(["security", "add-generic-password", "-U", "-s", SERVICIO, "-a", clave, "-w", valor],
                        check=True, capture_output=True, timeout=20)
         guardado = "keychain"
     elif sys.platform.startswith("win"):
         guardado = "dpapi:" + base64.b64encode(_dpapi(valor.encode("utf-8"), True)).decode()
+    elif shutil.which("secret-tool") and subprocess.run(["secret-tool", "store", "--label", f"{SERVICIO} {clave}", "servicio", SERVICIO, "clave", clave],
+                                                        input=valor, text=True, capture_output=True, timeout=20).returncode == 0:
+        guardado = "secret-tool"
     else:
         guardado = "plano:" + valor
+        try:
+            DB.chmod(0o600)
+        except OSError:
+            pass
     with _CANDADO, _db() as con:
         con.execute("INSERT INTO secretos(clave, valor) VALUES(?, ?) ON CONFLICT(clave) DO UPDATE SET valor = excluded.valor", (clave, guardado))
 
@@ -116,6 +125,9 @@ def leer_secreto(clave: str) -> str:
         return r.stdout.rstrip("\n") if r.returncode == 0 else ""
     if valor.startswith("dpapi:"):
         return _dpapi(base64.b64decode(valor[6:]), False).decode("utf-8")
+    if valor == "secret-tool":
+        r = subprocess.run(["secret-tool", "lookup", "servicio", SERVICIO, "clave", clave], capture_output=True, text=True, timeout=20)
+        return r.stdout.rstrip("\n") if r.returncode == 0 else ""
     return valor[6:] if valor.startswith("plano:") else ""
 
 
@@ -127,6 +139,8 @@ def hay_secreto(clave: str) -> bool:
 def borrar_secreto(clave: str) -> None:
     if sys.platform == "darwin":
         subprocess.run(["security", "delete-generic-password", "-s", SERVICIO, "-a", clave], capture_output=True, timeout=20)
+    elif shutil.which("secret-tool"):
+        subprocess.run(["secret-tool", "clear", "servicio", SERVICIO, "clave", clave], capture_output=True, timeout=20)
     with _CANDADO, _db() as con:
         con.execute("DELETE FROM secretos WHERE clave = ?", (clave,))
 

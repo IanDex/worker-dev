@@ -2,7 +2,7 @@
 Junta el config.json del zip con el que ya está instalado, para que actualizar no borre nada: se conserva lo instalado
 (token, carpeta de repos, puerto) y solo se toma del zip lo que trae lleno y no es el texto de ejemplo.
 
-    python fusionar_config.py <config del zip o vacío> <config instalado>
+    python fusionar_config.py <config del zip o vacío> <config instalado> [carpeta del clon de worker-dev]
 """
 import json
 import sys
@@ -27,6 +27,8 @@ for clave, valor in nuevo.items():
 if not final.get("token") or EJEMPLO in str(final.get("token")):
     sys.exit("Falta tu token: copia config.ejemplo.json como config.json y pega el token que te dio el revisor.")
 final.setdefault("api", "https://b2b.global66.tech")
+if len(sys.argv) > 3 and (Path(sys.argv[3]) / ".git").exists():
+    final["repo_kit"] = str(Path(sys.argv[3]).resolve())
 Path(sys.argv[2]).parent.mkdir(parents=True, exist_ok=True)
 Path(sys.argv[2]).write_text(json.dumps(final, ensure_ascii=False, indent=1), encoding="utf-8")
 print(f"config listo ({'actualizado' if instalado else 'nuevo'})")
