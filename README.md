@@ -28,14 +28,17 @@ La guía completa, con la configuración del plan de pruebas, está en `guias/wi
 
 ## Actualizar
 
-No tienes que hacer nada: desde la 3.0 el worker revisa cada 30 minutos si hay una versión nueva en este repo. Si la hay,
-hace `git pull`, copia los archivos y se reinicia solo (nunca en medio de un análisis). Por eso:
+Dentro de la carpeta `worker-dev`:
 
-- Deja la carpeta `worker-dev` donde la clonaste: el worker la usa para actualizarse.
-- No modifiques sus archivos: Hodor verifica la huella de la versión instalada y rechaza los análisis de un kit que no
-  coincide, y con cambios locales el `git pull` no se puede hacer.
+```bash
+git pull
+```
 
-Si algo falla al actualizarse o al analizar, el revisor lo ve en su panel.
+Y vuelve a correr el instalador. Reemplaza el código y conserva tu token, tu configuración, tus análisis y tu base local
+(`~/.hodor-v3`).
+
+No modifiques los archivos del worker: Hodor verifica la huella de la versión instalada y rechaza los análisis de un
+kit que no coincide.
 
 ## Cómo saber que funciona
 

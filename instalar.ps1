@@ -7,7 +7,7 @@ $py = (Get-Command python -ErrorAction SilentlyContinue).Source
 if (-not $py) { throw "Falta Python 3." }
 New-Item -ItemType Directory -Force -Path $dest | Out-Null
 # Actualizar no borra nada: se reemplaza el código y se conserva tu config.json, tus análisis y tu base local (~/.hodor-v3).
-& $py (Join-Path $dir "fusionar_config.py") (Join-Path $dir "config.json") (Join-Path $dest "config.json") $dir
+& $py (Join-Path $dir "fusionar_config.py") (Join-Path $dir "config.json") (Join-Path $dest "config.json")
 if ($LASTEXITCODE -ne 0) { throw "No pude preparar config.json." }
 Copy-Item (Join-Path $dir "revisor_dev.py"), (Join-Path $dir "pruebas_dev.py"), (Join-Path $dir "panel.html"), (Join-Path $dir "fusionar_config.py") $dest -Force
 # El plan de pruebas lee la BD de ci con tu usuario de solo lectura: necesita pymysql.

@@ -80,11 +80,6 @@ Las contraseñas y llaves van al llavero de tu sistema y nunca salen de tu máqu
 del plan (ruta, vía, cabecera, id), corrígelo en el chat de la sección de pruebas; lo que se espera de cada escenario
 no se cambia.
 
-## Actualizaciones
-
-Desde la 3.0 el worker se actualiza solo desde el repo `worker-dev` (cada 30 minutos revisa si hay versión nueva,
-hace `git pull` y se reinicia). Deja la carpeta del clon donde está y no modifiques sus archivos.
-
 ## Si algo falla
 
 | Síntoma | Qué hacer |

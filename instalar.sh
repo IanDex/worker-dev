@@ -7,7 +7,7 @@ command -v claude >/dev/null || { echo "Falta el CLI claude: instálalo e inicia
 PY="$(command -v python3)"; [ -n "$PY" ] || { echo "Falta python3."; exit 1; }
 # Actualizar no borra nada: se reemplaza el código y se conserva tu config.json, tus análisis y tu base local (~/.hodor-v3).
 mkdir -p "$DEST"
-"$PY" "$DIR/fusionar_config.py" "$DIR/config.json" "$DEST/config.json" "$DIR"
+"$PY" "$DIR/fusionar_config.py" "$DIR/config.json" "$DEST/config.json"
 cp "$DIR/revisor_dev.py" "$DIR/pruebas_dev.py" "$DIR/panel.html" "$DIR/fusionar_config.py" "$DEST/"
 # El plan de pruebas lee la BD de ci con tu usuario de solo lectura: necesita pymysql.
 "$PY" -m pip install --user --quiet pymysql || echo "No pude instalar pymysql: el plan de pruebas no podrá leer la BD (pip install --user pymysql)."
