@@ -2,7 +2,7 @@
 
 Tu panel de revisión corre en tu máquina: http://127.0.0.1:7788. Pegas el link de tu PR, lo analizas con tu Claude
 (el mismo paquete y las mismas reglas del revisor central), ves el análisis completo, corriges y vuelves a analizar.
-Cuando quedas conforme, lo entregas. Si un commit no lo analizas tú, lo revisa el revisor central igual que siempre.
+Cuando quedas conforme, lo entregas. Hodor solo toma lo que tú entregas: un commit que no analizas no avanza.
 
 ## Requisitos
 

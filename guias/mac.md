@@ -9,7 +9,7 @@ Desde ahora analizas tus PRs en tu máquina antes de que los revise Hodor. Tu wo
 **http://127.0.0.1:7788** (se abre al instalar; después, `revisor_dev.py --panel`).
 
 1. Abres tu PR como siempre: los avisos de Sonar crean la tarjeta y Hodor lo toma con las reglas de siempre. Si tú
-   ya analizaste ese commit, Hodor usa tu análisis; si no, lo revisa el revisor central.
+   ya analizaste ese commit, Hodor usa tu análisis; si no, no avanza hasta que lo analices y lo entregues.
 2. En tu panel pegas el link del PR y pulsas **Analizar**. Hodor arma el paquete (diff exacto, lineamientos y las
    mismas instrucciones del revisor central) y tu worker lo analiza con tu `claude`.
 3. Ves el análisis completo, agrupado por historia: puntaje, hallazgos con archivo y línea, qué hace el cambio,

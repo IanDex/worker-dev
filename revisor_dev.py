@@ -1,6 +1,6 @@
 """
 Worker de revisión v3 de Hodor, con tu panel: tú eliges qué PR analizar, ves el análisis completo, corriges y, cuando
-quedas conforme, lo entregas. Lo que no analizas lo revisa el revisor central.
+quedas conforme, lo entregas. Hodor solo toma lo que entregas.
 
 El análisis corre en tu máquina con tu Claude, con el mismo paquete y las mismas reglas del revisor central, y vuelve
 a Hodor con un sello firmado. No publica nada en Slack, Jira ni CodeCommit.
@@ -37,7 +37,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "v3-worker 3.0"
+VERSION = "v3-worker 3.1"
 AQUI = Path(__file__).resolve().parent
 
 
@@ -290,7 +290,7 @@ def _db() -> sqlite3.Connection:
                                            estado TEXT, plan TEXT, ejecucion TEXT, dictamen TEXT, chat TEXT, sesion TEXT,
                                            error TEXT, creado REAL, actualizado REAL, enviado INTEGER DEFAULT 0);
     """)
-    for columna in ("puntos REAL", "inicio REAL", "fin REAL"):
+    for columna in ("puntos REAL", "inicio REAL", "fin REAL", "tramos TEXT"):
         try:
             con.execute(f"ALTER TABLE historias ADD COLUMN {columna}")
         except sqlite3.OperationalError:
@@ -365,18 +365,25 @@ def _fecha(texto: str) -> float:
 
 
 def _inicio_fin(changelog: dict, categoria: str) -> tuple:
-    """Cuándo empezó el trabajo (primer paso a un estado «en progreso») y, si ya terminó, cuándo pasó a terminada."""
-    inicio, fin = 0.0, 0.0
+    """Cuándo empezó el trabajo (primer paso a un estado «en progreso»), si ya terminó, cuándo pasó a terminada, y los
+    tramos en que estuvo en progreso: al pasar a PR staging (o a cualquier otro estado) deja de contar, y si vuelve a
+    progreso vuelve a contar."""
+    inicio, fin, tramos = 0.0, 0.0, []
     for h in sorted((changelog or {}).get("histories") or [], key=lambda x: x.get("created", "")):
         for it in h.get("items") or []:
             if it.get("field") != "status":
                 continue
             hacia = (it.get("toString") or "").lower()
-            if not inicio and "progres" in hacia:
-                inicio = _fecha(h.get("created", ""))
+            cuando = _fecha(h.get("created", ""))
+            if "progres" in hacia:
+                inicio = inicio or cuando
+                if not tramos or tramos[-1][1]:
+                    tramos.append([cuando, 0.0])
+            elif tramos and not tramos[-1][1]:
+                tramos[-1][1] = cuando
             if categoria == "done" and any(p in hacia for p in ("produc", "done", "terminad", "cerrad")):
-                fin = _fecha(h.get("created", ""))
-    return inicio, fin
+                fin = cuando
+    return inicio, fin, tramos
 
 
 def horas_habiles(desde: float, hasta: float) -> float:
@@ -393,9 +400,16 @@ def horas_habiles(desde: float, hasta: float) -> float:
 
 
 def tiempo_de(h: dict) -> dict:
-    """Semáforo de la historia: horas hábiles usadas desde que empezó contra las estimadas (1 punto = 4 h)."""
+    """Semáforo de la historia: horas hábiles en progreso contra las estimadas (1 punto = 4 h)."""
     puntos = h.get("puntos")
-    usadas = round(horas_habiles(h.get("inicio") or 0, h.get("fin") or time.time()), 1) if h.get("inicio") else None
+    try:
+        tramos = json.loads(h.get("tramos") or "[]")
+    except ValueError:
+        tramos = []
+    if tramos:
+        usadas = round(sum(horas_habiles(a, b or time.time()) for a, b in tramos), 1)
+    else:
+        usadas = round(horas_habiles(h.get("inicio") or 0, h.get("fin") or time.time()), 1) if h.get("inicio") else None
     if not puntos:
         return {"color": "off", "usadas": usadas, "estimadas": None}
     estimadas = float(puntos) * HORAS_POR_PUNTO
@@ -425,22 +439,22 @@ def leer_jira(claves: list) -> dict:
         for it in datos.get("issues") or []:
             f = it.get("fields") or {}
             st = f.get("status") or {}
-            inicio, fin = _inicio_fin(it.get("changelog"), (st.get("statusCategory") or {}).get("key", ""))
+            inicio, fin, tramos = _inicio_fin(it.get("changelog"), (st.get("statusCategory") or {}).get("key", ""))
             vistas[it["key"]] = {"clave": it["key"], "titulo": f.get("summary", ""), "estado": st.get("name", ""),
-                                 "puntos": f.get(CAMPO_PUNTOS), "inicio": inicio, "fin": fin,
+                                 "puntos": f.get(CAMPO_PUNTOS), "inicio": inicio, "fin": fin, "tramos": json.dumps(tramos),
                                  "categoria": (st.get("statusCategory") or {}).get("key", ""),
                                  "estado_desde": _desde(it.get("changelog"), st.get("name", ""), f.get("statuscategorychangedate") or ""),
                                  "url": f"{_jira_cred()[2]}/browse/{it['key']}", "asignada": 1 if "assignee" in jql else 0}
     ahora = time.time()
     with _DB_CANDADO, _db() as con:
         for v in vistas.values():
-            con.execute("""INSERT INTO historias(clave, titulo, estado, categoria, estado_desde, url, asignada, leida, puntos, inicio, fin)
-                           VALUES(?,?,?,?,?,?,?,?,?,?,?)
+            con.execute("""INSERT INTO historias(clave, titulo, estado, categoria, estado_desde, url, asignada, leida, puntos, inicio, fin, tramos)
+                           VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
                            ON CONFLICT(clave) DO UPDATE SET titulo=excluded.titulo, estado=excluded.estado, categoria=excluded.categoria,
                            estado_desde=excluded.estado_desde, url=excluded.url, asignada=MAX(historias.asignada, excluded.asignada),
-                           leida=excluded.leida, puntos=excluded.puntos, inicio=excluded.inicio, fin=excluded.fin""",
+                           leida=excluded.leida, puntos=excluded.puntos, inicio=excluded.inicio, fin=excluded.fin, tramos=excluded.tramos""",
                         (v["clave"], v["titulo"], v["estado"], v["categoria"], v["estado_desde"], v["url"], v["asignada"], ahora,
-                         v["puntos"], v["inicio"], v["fin"]))
+                         v["puntos"], v["inicio"], v["fin"], v["tramos"]))
     poner_ajuste("jira_leido", str(ahora))
     return {"ok": True, "historias": len(vistas)}
 
@@ -933,7 +947,7 @@ class Panel(BaseHTTPRequestHandler):
             return self._json(200, abrir_terminal(str(cuerpo.get("pr", "")), str(cuerpo.get("repo", "")), str(cuerpo.get("rama", ""))))
         if self.path == "/api/ocultar":
             with _DB_CANDADO, _db() as con:
-                if cuerpo.get("tipo") in ("ignorado", "archivado"):
+                if cuerpo.get("tipo") in ("ignorado", "archivado", "cerrado"):
                     con.execute("INSERT OR REPLACE INTO ocultos(pr, tipo, en) VALUES(?,?,?)", (str(cuerpo.get("pr")), cuerpo["tipo"], time.time()))
                 else:
                     con.execute("DELETE FROM ocultos WHERE pr = ?", (str(cuerpo.get("pr")),))

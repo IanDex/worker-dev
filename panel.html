@@ -200,7 +200,7 @@ function cabecera() {
 function hero() {
   return `<section class="hero">
     <h1>¿Qué PR revisamos?</h1>
-    <p>Pega el link de tu PR. Tu Claude lo analiza con las mismas reglas del revisor; corriges, vuelves a analizar y, cuando quedes conforme, lo entregas. Lo que no analices lo revisa el revisor central.</p>
+    <p>Pega el link de tu PR. Tu Claude lo analiza con las mismas reglas del revisor; corriges, vuelves a analizar y, cuando quedes conforme, lo entregas. Hodor solo toma lo que entregas.</p>
     <form class="buscador" data-form="pedir">
       <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#949aab" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
       <label for="url" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">Link del PR</label>
@@ -255,8 +255,9 @@ function vistaMis() {
   const paginas = Math.max(1, Math.ceil(grupos.length / POR_PAGINA));
   S.pagina = Math.min(S.pagina, paginas);
   const visibles = grupos.slice((S.pagina - 1) * POR_PAGINA, S.pagina * POR_PAGINA);
-  const pedidos = (d.pedidos || []).map((p) => p.resultado
-    ? `<div class="aviso c-bad">#${esc(p.pr)}: ${esc(String(p.resultado).replace(/^rechazado:\s*/, ""))}</div>`
+  const cerrados = d.ocultos || {};
+  const pedidos = (d.pedidos || []).filter((p) => !p.resultado || cerrados[`pedido:${p.pr}:${p.en}`] !== "cerrado").map((p) => p.resultado
+    ? `<div class="aviso c-bad" style="display:flex;gap:10px;align-items:flex-start"><span style="flex:1">${esc(String(p.resultado).replace(/^rechazado:\s*/, ""))}</span><button class="btn fant" style="padding:2px 8px" data-cerrar-pedido="${esc(`pedido:${p.pr}:${p.en}`)}" aria-label="Quitar este aviso" title="Quitar este aviso">✕</button></div>`
     : `<div class="aviso c-acc">#${esc(p.pr)}: pedido ${esc(hace(p.en))}, Hodor lo está validando…</div>`).join("");
   return `${pedidos}
     <div class="barra" role="group" aria-label="Filtrar por estado de la historia">
@@ -289,7 +290,7 @@ function semaforo(h) {
   if (t.usadas == null) return `<span class="chip c-off" title="${esc(`${h.puntos} SP = ${fmt(t.estimadas)} h hábiles. Todavía no pasó a En progreso en Jira.`)}">${esc(h.puntos)} SP · sin iniciar</span>`;
   const cls = { ok: "c-ok", warn: "c-warn", bad: "c-bad" }[t.color] || "c-off";
   const inicio = h.inicio ? new Date(h.inicio * 1000).toLocaleString("es-CO", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
-  const tip = `${h.puntos} SP = ${fmt(t.estimadas)} h hábiles (1 SP = 4 h). Lleva ${fmt(t.usadas)} h hábiles desde que pasó a En progreso${inicio ? ` (${inicio})` : ""}${h.fin ? ", hasta que terminó" : ""}. `
+  const tip = `${h.puntos} SP = ${fmt(t.estimadas)} h hábiles (1 SP = 4 h). Lleva ${fmt(t.usadas)} h hábiles en En progreso${inicio ? ` (empezó el ${inicio})` : ""}: al pasar a PR staging deja de contar y, si vuelve a En progreso, sigue. `
     + (t.color === "ok" ? "Va dentro del tiempo." : t.color === "warn" ? "Se está acercando al tiempo estimado." : `Se pasó por ${fmt(t.usadas - t.estimadas)} h.`)
     + " Jornada: lunes a viernes, 9-13 y 14-18.";
   return `<span class="chip ${cls}" title="${esc(tip)}"><span class="punto"></span>${fmt(t.usadas)} / ${fmt(t.estimadas)} h</span>`;
@@ -443,7 +444,7 @@ function vistaDetectados() {
       ${abierto ? g.prs.map((x) => filaDet(x)).join("") : ""}
     </section>`;
   };
-  return `<p style="margin:0;color:var(--tenue);font-size:13px">Tus PRs abiertos de los últimos 30 días que vimos pasar por los canales de Sonar, agrupados por historia. Si lo analizas tú, Hodor usa tu análisis; si no, lo revisa el revisor central igual que siempre.</p>
+  return `<p style="margin:0;color:var(--tenue);font-size:13px">Tus PRs abiertos de los últimos 30 días que vimos pasar por los canales de Sonar, agrupados por historia. Analízalos aquí y entrégalos: Hodor solo toma lo que tú entregas.</p>
     ${lista.length ? `<div class="barra"><span style="flex:1"></span><button class="btn fant" data-plegartodos="det">${lista.every((g) => S.abiertos.has(`det:${g.hu}`)) ? "Colapsar todas" : "Expandir todas"}</button></div>
     ${lista.slice((S.pagDet - 1) * POR_PAGINA_DET, S.pagDet * POR_PAGINA_DET).map(grupoDet).join("")}
     <div class="pag"><span style="flex:1"></span>
@@ -487,7 +488,7 @@ function frenoPruebas(x) {
 function tarjetaHallazgo(hh, extra) {
   const sev = String(hh.severidad || "").toLowerCase();
   const sevChip = `<span class="chip ${sev === "critica" ? "c-bad" : sev === "alta" ? "c-nar" : sev === "media" ? "c-warn" : "c-off"}">${esc(hh.severidad)}</span>`;
-  return `<article class="h" style="${hh._retirado ? "opacity:.6" : hh._fuera ? "border-style:dashed" : ""}"><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">${sevChip}${hh._idor ? `<span class="chip c-bad">IDOR</span>` : ""}<b style="${hh._retirado ? "text-decoration:line-through" : ""}">${esc(hh.titulo)}</b><span style="flex:1"></span>${extra || ""}</div>
+  return `<article class="h" id="hallazgo-${hh._i}" style="${hh._retirado ? "opacity:.6" : hh._fuera ? "border-style:dashed" : ""}"><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">${sevChip}${hh._idor ? `<span class="chip c-bad">IDOR</span>` : ""}<b style="${hh._retirado ? "text-decoration:line-through" : ""}">${esc(hh.titulo)}</b><span style="flex:1"></span>${extra || ""}</div>
     <span class="mono" style="font-size:12px;color:var(--tenue)">${esc(String(hh.archivo || "").split("/").pop())}${hh.linea ? `:${esc(hh.linea)}` : ""} · ${esc(hh.categoria || "")}</span><p>${esc(hh.comentario)}</p></article>`;
 }
 
@@ -668,6 +669,7 @@ function cajon() {
   const d = datosDe(x) || {}; const h = (S.datos.historias || {})[x.historia];
   const crit = Number(d.criticas || 0), p = d.puntaje;
   const freno = bloqueo(d) || frenoPruebas(x);
+  const bloqueantes = (d.hallazgos || []).filter((h) => !h._retirado && !h._fuera && (h._idor || /^(critic|alt)/i.test(String(h.severidad || ""))));
   const puedeEnviar = x.estado === "v3_analizado" && !freno;
   const bajo = p != null && p < 80;
   const banda = x.estado === "v3_analizado"
@@ -695,6 +697,7 @@ function cajon() {
       <div style="display:flex;flex-direction:column;gap:4px;flex:1;min-width:220px">
         <b style="color:${banda[2]}">${esc(estadoPr(x)[0])}</b>
         <span style="color:var(--suave);font-size:13px">${d.criticas ?? 0} críticas · ${d.altas ?? 0} altas · ${d.medias ?? 0} medias · ${d.bajas ?? 0} bajas${x.commit ? ` · commit <span class="mono">${esc(x.commit.slice(0, 8))}</span>` : ""}. ${esc(banda[3])}</span>
+        ${bloqueantes.length ? `<div style="display:flex;flex-direction:column;gap:4px;margin-top:6px"><span style="font-size:12px;color:var(--bad-t);font-weight:600">Lo que frena la entrega:</span>${bloqueantes.map((h) => `<a href="#hallazgo-${h._i}" data-ir-hallazgo="${h._i}" style="color:var(--bad-t);font-size:13px;text-decoration:none">• <b>${esc(h.severidad)}</b>: ${esc(h.titulo)}${h.archivo ? ` <span class="mono" style="color:var(--tenue)">${esc(String(h.archivo).split("/").pop())}${h.linea ? `:${esc(h.linea)}` : ""}</span>` : ""}</a>`).join("")}</div>` : ""}
       </div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
         <button class="btn ${puedeEnviar ? "ok" : ""}" data-enviar="${x.id}" ${puedeEnviar ? "" : "disabled"}>${x.entregado ? "Entregado a Hodor ✓" : "Entregar a Hodor"}</button>
@@ -715,9 +718,9 @@ function cajon() {
         ${(r.faltan || []).map((f) => `<span class="mono" style="font-size:12px;color:var(--bad-t);padding-left:8px">${esc(f.ruta)}${f.lineas ? ` · ${esc(f.lineas)} línea(s)` : ""}${f.motivo ? ` · ${esc(f.motivo)}` : ""}</span>`).join("")}</div>`).join("")}
       ${x.reglas.ok ? "" : `<span style="font-size:13px;color:var(--bad-t)">Si lo envías así, Hodor lo deja esperando hasta que ese código llegue a la rama anterior.</span>`}
     </section>` : ""}
+    ${seccionHallazgos(x, d)}
     ${d.funcional ? `<div class="dos"><section class="caja"><span class="rot">Qué hace el cambio</span><p style="margin:0;line-height:1.6;color:#d7dbe6">${esc(d.funcional.que_hace)}</p></section>
       <section class="caja"><span class="rot">A qué afecta</span><ul style="margin:0;padding-left:18px;line-height:1.6;color:#d7dbe6">${(d.funcional.afecta || []).map((a) => `<li>${esc(a)}</li>`).join("")}</ul></section></div>` : ""}
-    ${seccionHallazgos(x, d)}
     ${seccionDebate(x, d)}
     ${seccionPruebas(x)}
     ${esc3.length ? `<section style="display:flex;flex-direction:column;gap:8px"><span class="rot">Escenarios de prueba · pruébalo antes de enviar</span>
@@ -844,6 +847,8 @@ document.addEventListener("click", async (e) => {
   }
   if ((el = t("[data-menu]"))) { S.menu = S.menu === el.dataset.menu ? "" : el.dataset.menu; return pintar(); }
   if ((el = t("[data-filtrohu]"))) { S.busca = el.dataset.filtrohu; S.menu = ""; return pintar(); }
+  if ((el = t("[data-ir-hallazgo]"))) { e.preventDefault(); const a = document.getElementById(`hallazgo-${el.dataset.irHallazgo}`); if (a) a.scrollIntoView({ behavior: "smooth", block: "center" }); return; }
+  if ((el = t("[data-cerrar-pedido]"))) { await api("/api/ocultar", { pr: el.dataset.cerrarPedido, tipo: "cerrado" }); return cargar(); }
   if ((el = t("[data-archivar]"))) { await api("/api/ocultar", { pr: `hu:${el.dataset.archivar}`, tipo: S.verArchivados ? "" : "archivado" }); S.menu = ""; aviso(S.verArchivados ? "Historia de vuelta en activas." : "Historia archivada. La ves en «Ver archivadas»."); return cargar(); }
   if ((el = t("[data-abrir]"))) { S.cajon = el.dataset.abrir; pintar(); return cargarCajon(el.dataset.abrir); }
   if ((el = t("[data-copiar]"))) { try { await navigator.clipboard.writeText(el.dataset.copiar); aviso("Copiado."); } catch { aviso("No pude copiar."); } return; }
