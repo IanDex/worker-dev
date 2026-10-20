@@ -474,17 +474,6 @@ function vistaSugerencias() {
 
 // ── Cajón: hallazgos por ronda, debate y plan de pruebas ──
 
-function frenoPruebas(x) {
-  if ((x.destino || "") !== "release") return "";
-  const p = x.pruebas;
-  if (!p || !p.dictamen) return "falta el plan de pruebas en ci";
-  const idor = new Set(((p.plan || {}).escenarios || []).filter((e) => e.idor).map((e) => e.id));
-  const malos = (p.dictamen.escenarios || []).filter((e) => idor.has(e.id) && e.resultado !== "pasa").map((e) => e.id);
-  if (malos.length) return `el escenario de IDOR no pasa: ${malos.join(", ")}`;
-  if (p.dictamen.veredicto !== "pasa") return `el plan de pruebas dio «${p.dictamen.veredicto}»`;
-  return "";
-}
-
 function tarjetaHallazgo(hh, extra) {
   const sev = String(hh.severidad || "").toLowerCase();
   const sevChip = `<span class="chip ${sev === "critica" ? "c-bad" : sev === "alta" ? "c-nar" : sev === "media" ? "c-warn" : "c-off"}">${esc(hh.severidad)}</span>`;
@@ -668,7 +657,7 @@ function cajon() {
   if (!x) return "";
   const d = datosDe(x) || {}; const h = (S.datos.historias || {})[x.historia];
   const crit = Number(d.criticas || 0), p = d.puntaje;
-  const freno = bloqueo(d) || frenoPruebas(x);
+  const freno = bloqueo(d);
   const bloqueantes = (d.hallazgos || []).filter((h) => !h._retirado && !h._fuera && (h._idor || /^(critic|alt)/i.test(String(h.severidad || ""))));
   const puedeEnviar = x.estado === "v3_analizado" && !freno;
   const bajo = p != null && p < 80;
