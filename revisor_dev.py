@@ -30,6 +30,7 @@ import sys
 import tarfile
 import threading
 import time
+import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -37,7 +38,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "v3-worker 3.1.3"
+VERSION = "v3-worker 3.1.4"
 AQUI = Path(__file__).resolve().parent
 
 
@@ -148,10 +149,14 @@ def revisar(p: dict) -> None:
         except ValueError:
             ruido = (ruido + [linea.strip()])[-5:] if linea.strip() else ruido
             continue
+        if not isinstance(evento, dict):
+            ruido = (ruido + [linea.strip()])[-5:]
+            continue
         sesion = evento.get("session_id") or sesion
         if evento.get("type") == "assistant":
-            for parte in evento.get("message", {}).get("content", []):
-                if parte.get("type") == "tool_use":
+            contenido = (evento.get("message") or {}).get("content") if isinstance(evento.get("message"), dict) else []
+            for parte in contenido if isinstance(contenido, list) else []:
+                if isinstance(parte, dict) and parte.get("type") == "tool_use":
                     pasos += 1
                     if pasos > int(p.get("max_pasos") or 60):
                         proc.kill()
@@ -212,8 +217,10 @@ def una_vuelta() -> int:
             revisar(p)
             hechas += 1
         except Exception as err:  # noqa: BLE001 — se reintenta en la próxima vuelta
-            log(f"#{p.get('pr')}: falló: {str(err)[:300]}")
-            reportar_falla(f"análisis de #{p.get('pr')}", err)
+            donde = traceback.extract_tb(err.__traceback__)[-1] if err.__traceback__ else None
+            detalle = f"{err} (en {Path(donde.filename).name}:{donde.lineno})" if donde else str(err)
+            log(f"#{p.get('pr')}: falló: {detalle[:300]}")
+            reportar_falla(f"análisis de #{p.get('pr')}", detalle)
     return hechas
 
 
@@ -503,6 +510,9 @@ def _claude_correr(orden: list, cwd: Path, reanudar: str, espera: int, inicio: f
             evento = json.loads(linea)
         except ValueError:
             ruido = (ruido + [linea.strip()])[-5:] if linea.strip() else ruido
+            continue
+        if not isinstance(evento, dict):
+            ruido = (ruido + [linea.strip()])[-5:]
             continue
         sesion = evento.get("session_id") or sesion
         if evento.get("type") == "result":
