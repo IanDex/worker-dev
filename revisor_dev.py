@@ -37,7 +37,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "v3-worker 3.1.2"
+VERSION = "v3-worker 3.1.3"
 AQUI = Path(__file__).resolve().parent
 
 
@@ -62,6 +62,8 @@ HERRAMIENTAS = ["Read", "Grep", "Glob", "Write",
                 "Bash(aws codecommit get-blob:*)", "Bash(aws codecommit get-file:*)",
                 "Bash(aws codecommit get-comments-for-pull-request:*)", "Bash(node:*)"]
 ESPERA = 1800
+# En Windows claude abría una consola vacía; si el dev la cerraba, el análisis moría (0xC000013A).
+SIN_VENTANA = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 os.environ.setdefault("HODOR_V3_TRABAJO", str(TRABAJO))
 if CONFIG.get("repos"):
     os.environ.setdefault("HODOR_V3_REPOS", str(CONFIG["repos"]))
@@ -135,7 +137,7 @@ def revisar(p: dict) -> None:
              "--allowedTools", *HERRAMIENTAS, *(["--model", p["modelo"]] if p.get("modelo") else [])]
     inicio = time.time()
     proc = subprocess.Popen(orden, cwd=str(carpeta), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                            text=True, encoding="utf-8", errors="replace")
+                            text=True, encoding="utf-8", errors="replace", creationflags=SIN_VENTANA)
     final, sesion, turnos, costo, pasos, ruido = "", "", None, {}, 0, []
     for linea in proc.stdout:
         if time.time() - inicio > ESPERA:
@@ -490,7 +492,7 @@ def _claude(pedido: str, cwd: Path, herramientas: list, prohibido: list | None =
 
 def _claude_correr(orden: list, cwd: Path, reanudar: str, espera: int, inicio: float) -> dict:
     proc = subprocess.Popen(orden, cwd=str(cwd), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                            text=True, encoding="utf-8", errors="replace",
+                            text=True, encoding="utf-8", errors="replace", creationflags=SIN_VENTANA,
                             env={**os.environ, "HODOR_V3_TRABAJO": str(TRABAJO), "HODOR_V3_REPOS": str(CONFIG.get("repos") or "")})
     final, sesion, costo, ruido = "", reanudar, {}, []
     for linea in proc.stdout:
