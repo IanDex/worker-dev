@@ -37,7 +37,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "v3-worker 3.1.1"
+VERSION = "v3-worker 3.1.2"
 AQUI = Path(__file__).resolve().parent
 
 
@@ -136,7 +136,7 @@ def revisar(p: dict) -> None:
     inicio = time.time()
     proc = subprocess.Popen(orden, cwd=str(carpeta), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                             text=True, encoding="utf-8", errors="replace")
-    final, sesion, turnos, costo, pasos = "", "", None, {}, 0
+    final, sesion, turnos, costo, pasos, ruido = "", "", None, {}, 0, []
     for linea in proc.stdout:
         if time.time() - inicio > ESPERA:
             proc.kill()
@@ -144,6 +144,7 @@ def revisar(p: dict) -> None:
         try:
             evento = json.loads(linea)
         except ValueError:
+            ruido = (ruido + [linea.strip()])[-5:] if linea.strip() else ruido
             continue
         sesion = evento.get("session_id") or sesion
         if evento.get("type") == "assistant":
@@ -162,7 +163,7 @@ def revisar(p: dict) -> None:
                      "turnos": turnos, "modelo": p.get("modelo") or "por defecto", "worker": VERSION}
     proc.wait()
     if not final:
-        raise RuntimeError(f"claude no devolvió resultado (código {proc.returncode})")
+        raise RuntimeError(f"claude no devolvió resultado (código {proc.returncode})" + (f": {' | '.join(ruido)[-400:]}" if ruido else ""))
     sello = {"fila": p["id"], "pr": str(p["pr"]), "paquete_sha": p["paquete_sha"], "desafio": p["desafio"], "sesion": sesion,
              "turnos": turnos, "segundos": int(time.time() - inicio), "version": VERSION, "kit": huella_kit()}
     res = _api("POST", "/api/v3/resultado", {"sello": sello, "final": final, "costo": costo, "firma": firma(sello, final)})
@@ -491,7 +492,7 @@ def _claude_correr(orden: list, cwd: Path, reanudar: str, espera: int, inicio: f
     proc = subprocess.Popen(orden, cwd=str(cwd), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                             text=True, encoding="utf-8", errors="replace",
                             env={**os.environ, "HODOR_V3_TRABAJO": str(TRABAJO), "HODOR_V3_REPOS": str(CONFIG.get("repos") or "")})
-    final, sesion, costo = "", reanudar, {}
+    final, sesion, costo, ruido = "", reanudar, {}, []
     for linea in proc.stdout:
         if time.time() - inicio > espera:
             proc.kill()
@@ -499,6 +500,7 @@ def _claude_correr(orden: list, cwd: Path, reanudar: str, espera: int, inicio: f
         try:
             evento = json.loads(linea)
         except ValueError:
+            ruido = (ruido + [linea.strip()])[-5:] if linea.strip() else ruido
             continue
         sesion = evento.get("session_id") or sesion
         if evento.get("type") == "result":
@@ -507,7 +509,7 @@ def _claude_correr(orden: list, cwd: Path, reanudar: str, espera: int, inicio: f
                      "segundos": int(time.time() - inicio)}
     proc.wait()
     if not final:
-        return {"error": f"claude no devolvió resultado (código {proc.returncode})"}
+        return {"error": f"claude no devolvió resultado (código {proc.returncode})" + (f": {' | '.join(ruido)[-400:]}" if ruido else "")}
     return {"final": final, "sesion": sesion, "costo": costo}
 
 
