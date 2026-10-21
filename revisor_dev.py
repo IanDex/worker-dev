@@ -38,7 +38,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "v3-worker 3.1.5"
+VERSION = "v3-worker 3.1.6"
 AQUI = Path(__file__).resolve().parent
 
 
@@ -895,17 +895,52 @@ def _carpeta_repo(repo: str) -> Path | None:
     return None
 
 
+def _worktree(repo_dir: Path, repo: str, pr: str, rama: str) -> Path:
+    """Una carpeta aparte (git worktree) con la rama del PR, para no cambiarle la rama ni tocar los cambios del repo donde
+    estás trabajando. Si esa rama ya es la que tienes abierta en tu repo, se usa tu repo tal cual."""
+    def git(*a: str, espera: int = 120) -> subprocess.CompletedProcess:
+        return subprocess.run(["git", "-C", str(repo_dir), *a], capture_output=True, text=True, timeout=espera)
+    actual = git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+    if rama and actual == rama:
+        return repo_dir
+    destino = TRABAJO / "worktrees" / f"{repo}-pr{pr}"
+    listado = git("worktree", "list", "--porcelain").stdout
+    if f"worktree {destino.as_posix()}" in listado.replace("\\", "/") and (destino / ".git").exists():
+        git("-C", str(destino), "pull", "--ff-only", "-q")
+        return destino
+    git("worktree", "prune")
+    git("fetch", "-q", "origin", rama, espera=300)
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    ya_abierta = f"branch refs/heads/{rama}" in listado
+    tiene_local = git("rev-parse", "--verify", "--quiet", f"refs/heads/{rama}").returncode == 0
+    if ya_abierta:
+        r = git("worktree", "add", "--detach", str(destino), f"origin/{rama}")
+    elif tiene_local:
+        r = git("worktree", "add", str(destino), rama)
+    else:
+        r = git("worktree", "add", "--track", "-b", rama, str(destino), f"origin/{rama}")
+    if r.returncode != 0:
+        raise RuntimeError(f"no pude crear la carpeta aparte para {rama}: {(r.stderr or r.stdout).strip()[:300]}")
+    return destino
+
+
 def abrir_terminal(pr: str, repo: str, rama: str) -> dict:
-    """Abre una terminal en tu repo con Claude, que arranca leyendo el análisis de Hodor para corregir contigo."""
-    carpeta = _carpeta_repo(repo)
-    if not carpeta:
+    """Abre una terminal con Claude en una carpeta aparte con la rama del PR (git worktree): tu repo se queda en la rama y
+    con los cambios que tenías. Claude arranca leyendo el análisis de Hodor para corregir contigo."""
+    repo_dir = _carpeta_repo(repo)
+    if not repo_dir:
         return {"error": f"no encuentro el repo {repo} en {CONFIG.get('repos') or Path.home() / 'Documents'}: configura la carpeta de tus repos"}
     analisis = ANALISIS / f"pr{pr}.md"
     if not analisis.exists():
         return {"error": "todavía no tengo el análisis de ese PR en esta máquina: vuelve a analizarlo"}
-    pedido = (f"Lee el análisis de Hodor en {analisis} (PR #{pr} de {repo}, rama {rama}). Ponte en la rama {rama} "
-              "(git fetch y checkout si hace falta) y ayúdame a corregir los hallazgos, uno por uno, explicándome cada cambio. "
-              "No hagas push sin que te lo pida.")
+    try:
+        carpeta = _worktree(repo_dir, repo, str(pr), rama)
+    except Exception as err:  # noqa: BLE001
+        return {"error": str(err)[:400]}
+    donde = ("tu repo, que ya está en esa rama" if carpeta == repo_dir else
+             f"una carpeta aparte ({carpeta}, un git worktree): no cambies de rama ni toques el repo original {repo_dir}")
+    pedido = (f"Lee el análisis de Hodor en {analisis} (PR #{pr} de {repo}, rama {rama}). Estás en {donde}. "
+              "Ayúdame a corregir los hallazgos, uno por uno, explicándome cada cambio. No hagas push sin que te lo pida.")
     if sys.platform.startswith("win"):
         guion = TRABAJO / f"abrir-pr{pr}.ps1"
         guion.write_text(f"Set-Location -LiteralPath '{carpeta}'\nclaude \"{pedido.replace(chr(34), chr(39))}\"\n", encoding="utf-8-sig")
