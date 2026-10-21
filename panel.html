@@ -173,7 +173,7 @@ function estadoPr(x) {
   if (x.estado === "v3_listo") return ["Enviado · Hodor lo procesa", "c-warn"];
   if (x.estado === "hecha") return x.accion === "aprobado" ? ["Enviado · aprobado", "c-ok"] : x.accion === "comentado" ? ["Enviado · con comentarios", "c-nar"] : ["Enviado · " + (x.accion || "procesado"), "c-info"];
   if (x.estado === "superada") return ["Cambió el commit · analiza de nuevo", "c-warn"];
-  if (x.estado === "cancelada") return [x.motivo || "Cancelado", "c-off"];
+  if (x.estado === "cancelada") return [x.motivo || "Cancelado", x.accion === "v3_fallo" ? "c-bad" : "c-off"];
   return [x.estado, "c-off"];
 }
 const colorPuntaje = (p) => p == null ? "var(--tenue-2)" : p >= 85 ? "var(--ok)" : p >= 70 ? "var(--warn)" : "var(--bad)";
@@ -327,6 +327,7 @@ function nodo(p, anterior, rama) {
   if (an) {
     if (an.estado === "corriendo" || an.estado === "v3" || (an.estado === "pendiente" && !an.entregado)) return n("corre", "Analizando en tu worker", "", ver);
     if (an.estado === "superada") return n("tu", "Cambió el commit", "Analízalo de nuevo", `<button class="btn prim" data-pedir="${esc(p.url)}">Analizar</button>`);
+    if (an.estado === "cancelada" && an.accion === "v3_fallo") return n("mal", "El análisis falló", an.motivo || "Vuelve a pedirlo", `<button class="btn prim" data-pedir="${esc(p.url)}">Analizar de nuevo</button>`);
     if (an.estado === "v3_analizado") {
       const b = bloqueo(d);
       return b ? n("mal", `${punt ? punt + ": " : ""}hay que corregir`, b, `<button class="btn" data-abrir="${an.id}">Ver hallazgos</button>`)

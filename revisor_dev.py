@@ -38,7 +38,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "v3-worker 3.1.4"
+VERSION = "v3-worker 3.1.5"
 AQUI = Path(__file__).resolve().parent
 
 
@@ -65,6 +65,29 @@ HERRAMIENTAS = ["Read", "Grep", "Glob", "Write",
 ESPERA = 1800
 # En Windows claude abría una consola vacía; si el dev la cerraba, el análisis moría (0xC000013A).
 SIN_VENTANA = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+# En Windows claude es un .cmd y corre por cmd.exe, que corta la línea de comandos en el primer salto de línea: el pedido
+# (multilínea) se llevaba los flags que venían después y claude respondía en texto plano. El pedido va por stdin.
+AJUSTES_CLAUDE = '{"disableAllHooks": true}'
+
+
+def _lanzar_claude(orden: list, pedido: str, cwd: Path, env: dict | None = None) -> subprocess.Popen:
+    proc = subprocess.Popen(orden, cwd=str(cwd), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.PIPE,
+                            text=True, encoding="utf-8", errors="replace", creationflags=SIN_VENTANA, env=env)
+
+    def escribir() -> None:
+        try:
+            proc.stdin.write(pedido)
+            proc.stdin.close()
+        except OSError:
+            pass
+    threading.Thread(target=escribir, daemon=True).start()
+    return proc
+
+
+def _ajustes_claude(cwd: Path) -> str:
+    ruta = cwd / ".ajustes-claude.json"
+    ruta.write_text(AJUSTES_CLAUDE, encoding="utf-8")
+    return str(ruta)
 os.environ.setdefault("HODOR_V3_TRABAJO", str(TRABAJO))
 if CONFIG.get("repos"):
     os.environ.setdefault("HODOR_V3_REPOS", str(CONFIG["repos"]))
@@ -119,6 +142,8 @@ def bajar(p: dict) -> Path:
         raise RuntimeError("el paquete que bajé no tiene el sha que dice Hodor")
     destino = TRABAJO / f"pr{p['pr']}-{p['id']}"
     shutil.rmtree(destino, ignore_errors=True)
+    if destino.exists():  # en Windows un claude anterior puede seguir con archivos tomados: se usa otra carpeta
+        destino = TRABAJO / f"pr{p['pr']}-{p['id']}-{int(time.time())}"
     destino.mkdir(parents=True)
     with tarfile.open(fileobj=io.BytesIO(crudo), mode="r:gz") as tar:
         for m in tar.getmembers():
@@ -132,13 +157,12 @@ def revisar(p: dict) -> None:
     log(f"#{p['pr']} ({p['repo']}): bajando el paquete")
     carpeta = bajar(p)
     pedido = (carpeta / "PEDIDO.txt").read_text(encoding="utf-8")
-    orden = [shutil.which("claude") or "claude", "-p", "--settings", '{"disableAllHooks": true}', pedido,
+    orden = [shutil.which("claude") or "claude", "-p", "--settings", _ajustes_claude(carpeta),
              "--append-system-prompt-file", str(carpeta / "SISTEMA.md"), "--exclude-dynamic-system-prompt-sections",
              "--output-format", "stream-json", "--verbose", "--strict-mcp-config",
              "--allowedTools", *HERRAMIENTAS, *(["--model", p["modelo"]] if p.get("modelo") else [])]
     inicio = time.time()
-    proc = subprocess.Popen(orden, cwd=str(carpeta), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                            text=True, encoding="utf-8", errors="replace", creationflags=SIN_VENTANA)
+    proc = _lanzar_claude(orden, pedido, carpeta)
     final, sesion, turnos, costo, pasos, ruido = "", "", None, {}, 0, []
     for linea in proc.stdout:
         if time.time() - inicio > ESPERA:
@@ -148,9 +172,11 @@ def revisar(p: dict) -> None:
             evento = json.loads(linea)
         except ValueError:
             ruido = (ruido + [linea.strip()])[-5:] if linea.strip() else ruido
+            _SALIDA[:] = ruido
             continue
         if not isinstance(evento, dict):
             ruido = (ruido + [linea.strip()])[-5:]
+            _SALIDA[:] = ruido
             continue
         sesion = evento.get("session_id") or sesion
         if evento.get("type") == "assistant":
@@ -206,6 +232,24 @@ def limpiar_sesiones(dias: int = 14) -> None:
         shutil.rmtree(v["carpeta"], ignore_errors=True)
 
 
+TOPE_FALLOS = 3
+_SALIDA: list = []
+
+
+def _fallos(fila: int, sha: str) -> int:
+    """Fallos seguidos de este paquete. Un pedido nuevo trae otro paquete (otro sha) y arranca de cero."""
+    with _DB_CANDADO, _db() as con:
+        r = con.execute("SELECT n, sha FROM fallos WHERE fila = ?", (fila,)).fetchone()
+    return int(r["n"]) if r and r["sha"] == sha else 0
+
+
+def _cortar(p: dict, n: int, detalle: str) -> None:
+    """Llegó al tope: no se vuelve a correr y la fila queda cancelada en Hodor, con el motivo que ve el dev en su panel."""
+    res = _api("POST", "/api/v3/fallo", {"id": p["id"], "error": detalle[:500], "intentos": n})
+    if res.get("error"):
+        log(f"#{p.get('pr')}: no pude avisarle a Hodor que se cortó: {res['error']}")
+
+
 def una_vuelta() -> int:
     cola = _api("GET", "/api/v3/cola")
     if cola.get("error"):
@@ -213,14 +257,32 @@ def una_vuelta() -> int:
         return 0
     hechas = 0
     for p in cola.get("pendientes") or []:
+        fila = int(p["id"])
+        previos = _fallos(fila, p.get("paquete_sha") or "")
+        if previos >= TOPE_FALLOS:
+            with _DB_CANDADO, _db() as con:
+                r = con.execute("SELECT error FROM fallos WHERE fila = ?", (fila,)).fetchone()
+            _cortar(p, previos, (r["error"] if r else "") or "")
+            continue
+        _SALIDA.clear()
         try:
             revisar(p)
             hechas += 1
-        except Exception as err:  # noqa: BLE001 — se reintenta en la próxima vuelta
+            with _DB_CANDADO, _db() as con:
+                con.execute("DELETE FROM fallos WHERE fila = ?", (fila,))
+        except Exception as err:  # noqa: BLE001 — se reintenta en la próxima vuelta, hasta el tope
             donde = traceback.extract_tb(err.__traceback__)[-1] if err.__traceback__ else None
             detalle = f"{err} (en {Path(donde.filename).name}:{donde.lineno})" if donde else str(err)
-            log(f"#{p.get('pr')}: falló: {detalle[:300]}")
-            reportar_falla(f"análisis de #{p.get('pr')}", detalle)
+            n = previos + 1
+            with _DB_CANDADO, _db() as con:
+                con.execute("INSERT OR REPLACE INTO fallos(fila, pr, sha, n, error, en) VALUES(?,?,?,?,?,?)",
+                            (fila, str(p.get("pr")), p.get("paquete_sha") or "", n, detalle[:1000], time.time()))
+            log(f"#{p.get('pr')}: falló ({n} de {TOPE_FALLOS}): {detalle[:300]}")
+            salida = f" · últimas líneas: {' | '.join(_SALIDA)[-400:]}" if _SALIDA else ""
+            reportar_falla(f"análisis de #{p.get('pr')} (intento {n} de {TOPE_FALLOS})", detalle + salida, siempre=True)
+            if n >= TOPE_FALLOS:
+                reportar_falla(f"análisis de #{p.get('pr')}: cortado tras {n} fallos", "no se vuelve a intentar hasta que el dev lo pida de nuevo", siempre=True)
+                _cortar(p, n, detalle)
     return hechas
 
 
@@ -231,9 +293,10 @@ _OCUPADO = [0]
 CADA_ACTUALIZAR = 30 * 60
 
 
-def reportar_falla(contexto: str, err) -> None:
-    """Lo que falla en esta máquina le llega al revisor (Sistema → Revisión v3), como mucho una vez por hora por contexto."""
-    if VISTA or time.time() - _FALLAS.get(contexto, 0) < 3600:
+def reportar_falla(contexto: str, err, siempre: bool = False) -> None:
+    """Lo que falla en esta máquina le llega al revisor (Sistema → Revisión v3), como mucho una vez por hora por contexto
+    (los fallos de un análisis, siempre: ya tienen su propio tope)."""
+    if VISTA or (not siempre and time.time() - _FALLAS.get(contexto, 0) < 3600):
         return
     _FALLAS[contexto] = time.time()
     try:
@@ -296,6 +359,7 @@ def _db() -> sqlite3.Connection:
         CREATE TABLE IF NOT EXISTS sugerencias (id INTEGER PRIMARY KEY AUTOINCREMENT, tipo TEXT, texto TEXT, en REAL, enviada INTEGER DEFAULT 0);
         CREATE TABLE IF NOT EXISTS sesiones (fila INTEGER PRIMARY KEY, pr TEXT, sesion TEXT, carpeta TEXT, en REAL);
         CREATE TABLE IF NOT EXISTS chat (id INTEGER PRIMARY KEY AUTOINCREMENT, fila INTEGER, tema TEXT, rol TEXT, texto TEXT, meta TEXT, en REAL);
+        CREATE TABLE IF NOT EXISTS fallos (fila INTEGER PRIMARY KEY, pr TEXT, sha TEXT, n INTEGER NOT NULL, error TEXT, en REAL);
         CREATE TABLE IF NOT EXISTS planes (id INTEGER PRIMARY KEY AUTOINCREMENT, fila INTEGER, pr TEXT, repo TEXT, commit_pr TEXT,
                                            estado TEXT, plan TEXT, ejecucion TEXT, dictamen TEXT, chat TEXT, sesion TEXT,
                                            error TEXT, creado REAL, actualizado REAL, enviado INTEGER DEFAULT 0);
@@ -485,22 +549,21 @@ SCRIPT_PRUEBAS = (AQUI / "pruebas_dev.py").as_posix()
 
 def _claude(pedido: str, cwd: Path, herramientas: list, prohibido: list | None = None, reanudar: str = "", espera: int = ESPERA) -> dict:
     """Corre claude -p y devuelve {final, sesion, costo} o {error}. Con `reanudar`, sigue la sesión (debate y datos)."""
-    orden = [shutil.which("claude") or "claude", "-p", "--settings", '{"disableAllHooks": true}', pedido,
+    cwd.mkdir(parents=True, exist_ok=True)
+    orden = [shutil.which("claude") or "claude", "-p", "--settings", _ajustes_claude(cwd),
              "--output-format", "stream-json", "--verbose", "--strict-mcp-config", "--allowedTools", *herramientas,
              *(["--disallowedTools", *prohibido] if prohibido else []), *(["--resume", reanudar] if reanudar else [])]
-    cwd.mkdir(parents=True, exist_ok=True)
     inicio = time.time()
     _OCUPADO[0] += 1
     try:
-        return _claude_correr(orden, cwd, reanudar, espera, inicio)
+        return _claude_correr(orden, pedido, cwd, reanudar, espera, inicio)
     finally:
         _OCUPADO[0] -= 1
 
 
-def _claude_correr(orden: list, cwd: Path, reanudar: str, espera: int, inicio: float) -> dict:
-    proc = subprocess.Popen(orden, cwd=str(cwd), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                            text=True, encoding="utf-8", errors="replace", creationflags=SIN_VENTANA,
-                            env={**os.environ, "HODOR_V3_TRABAJO": str(TRABAJO), "HODOR_V3_REPOS": str(CONFIG.get("repos") or "")})
+def _claude_correr(orden: list, pedido: str, cwd: Path, reanudar: str, espera: int, inicio: float) -> dict:
+    proc = _lanzar_claude(orden, pedido, cwd,
+                          env={**os.environ, "HODOR_V3_TRABAJO": str(TRABAJO), "HODOR_V3_REPOS": str(CONFIG.get("repos") or "")})
     final, sesion, costo, ruido = "", reanudar, {}, []
     for linea in proc.stdout:
         if time.time() - inicio > espera:
@@ -510,9 +573,11 @@ def _claude_correr(orden: list, cwd: Path, reanudar: str, espera: int, inicio: f
             evento = json.loads(linea)
         except ValueError:
             ruido = (ruido + [linea.strip()])[-5:] if linea.strip() else ruido
+            _SALIDA[:] = ruido
             continue
         if not isinstance(evento, dict):
             ruido = (ruido + [linea.strip()])[-5:]
+            _SALIDA[:] = ruido
             continue
         sesion = evento.get("session_id") or sesion
         if evento.get("type") == "result":
