@@ -168,7 +168,7 @@ function estadoPr(x) {
   const d = datosDe(x);
   if (x.estado === "pendiente" && !x.entregado) return ["En cola", "c-acc"];
   if (x.estado === "corriendo" || x.estado === "v3") return ["Analizando en tu worker", "c-acc"];
-  if (x.estado === "v3_analizado") return d && Number(d.criticas || 0) ? ["Analizado · tiene críticas", "c-bad"] : d && d.puntaje < 80 ? ["Analizado · bajo el umbral", "c-warn"] : ["Analizado · listo para enviar", "c-ok"];
+  if (x.estado === "v3_analizado") return d && Number(d.criticas || 0) ? ["Analizado · tiene críticas", "c-bad"] : d && (d.puntaje < 85 || Number(d.medias || 0) > 2) ? ["Analizado · bajo el umbral", "c-warn"] : ["Analizado · listo para enviar", "c-ok"];
   if (x.entregado && ["pendiente", "espera", "corriendo"].includes(x.estado)) return ["Enviado · " + (x.motivo || "pasando las reglas"), "c-warn"];
   if (x.estado === "v3_listo") return ["Enviado · Hodor lo procesa", "c-warn"];
   if (x.estado === "hecha") return x.accion === "aprobado" ? ["Enviado · aprobado", "c-ok"] : x.accion === "comentado" ? ["Enviado · con comentarios", "c-nar"] : ["Enviado · " + (x.accion || "procesado"), "c-info"];
@@ -207,7 +207,7 @@ function hero() {
       <input id="url" name="url" placeholder="https://…/codecommit/repositories/ms-company/pull-requests/87796" autocomplete="off">
       <button class="btn prim" type="submit">Analizar</button>
     </form>
-    <div class="pistas"><span>también acepta el número: <span class="mono" style="color:var(--suave)">#87796</span></span><span>todo PR necesita su historia en la rama</span><span>con críticas, altas, un IDOR o menos de 80 no se entrega</span></div>
+    <div class="pistas"><span>también acepta el número: <span class="mono" style="color:var(--suave)">#87796</span></span><span>todo PR necesita su historia en la rama</span><span>con críticas, altas, un IDOR, más de 2 medias o menos de 85 no se entrega</span></div>
   </section>`;
 }
 
@@ -301,11 +301,12 @@ const FLECHA = `<div class="flecha" aria-hidden="true"><svg width="16" height="1
 
 function esIdor(d) { return (d && d.hallazgos || []).some((h) => /idor/i.test(`${h.titulo || ""} ${h.comentario || ""} ${h.categoria || ""}`)); }
 function bloqueo(d) {
-  if (!d) return "";
+  if (!d || d.puntaje == null) return "el análisis no trajo resultado: vuelve a pedirlo";
   if (esIdor(d)) return "tiene un IDOR: corrígelo; solo el revisor lo cierra";
   if (Number(d.criticas || 0)) return `tiene ${d.criticas} crítica(s)`;
   if (Number(d.altas || 0)) return `tiene ${d.altas} alta(s)`;
-  if (d.puntaje != null && Number(d.puntaje) < 80) return `${d.puntaje} de 80: no alcanza para entregar`;
+  if (Number(d.medias || 0) > 2) return `tiene ${d.medias} medias (máximo 2)`;
+  if (Number(d.puntaje) < 85) return `${d.puntaje} de 85: no alcanza para entregar`;
   return "";
 }
 function puertasDe(pr) { const x = (S.datos.detectados || []).find((y) => String(y.pr) === String(pr)); return x ? x : null; }
@@ -661,7 +662,7 @@ function cajon() {
   const freno = bloqueo(d);
   const bloqueantes = (d.hallazgos || []).filter((h) => !h._retirado && !h._fuera && (h._idor || /^(critic|alt)/i.test(String(h.severidad || ""))));
   const puedeEnviar = x.estado === "v3_analizado" && !freno;
-  const bajo = p != null && p < 80;
+  const bajo = p != null && p < 85;
   const banda = x.estado === "v3_analizado"
     ? (freno ? ["rgba(234,88,111,.08)", "rgba(234,88,111,.35)", "var(--bad-t)", `No se puede entregar: ${freno}. Corrige y vuelve a analizar.`]
       : ["rgba(1,209,150,.08)", "rgba(1,209,150,.3)", "var(--ok)", "Listo para entregar a Hodor."])

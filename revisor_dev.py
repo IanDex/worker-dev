@@ -38,7 +38,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "v3-worker 3.1.6"
+VERSION = "v3-worker 3.1.7"
 AQUI = Path(__file__).resolve().parent
 
 
@@ -188,6 +188,9 @@ def revisar(p: dict) -> None:
                         proc.kill()
                         raise RuntimeError("la revisión pasó del tope de pasos")
         elif evento.get("type") == "result":
+            if evento.get("is_error") or str(evento.get("subtype") or "success") != "success":
+                proc.kill()
+                raise RuntimeError(f"claude terminó con error: {' '.join(str(evento.get('result') or evento.get('subtype')).split())[:300]}")
             final, turnos = evento.get("result") or "", evento.get("num_turns")
             uso = evento.get("usage") or {}
             costo = {"entrada": uso.get("input_tokens", 0), "salida": uso.get("output_tokens", 0),
