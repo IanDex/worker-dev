@@ -88,6 +88,9 @@
   .leyenda { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12.5px; color: var(--tenue); }
   .leyenda i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
   .puertas { display: flex; gap: 6px; flex-wrap: wrap; }
+  .porque { margin-top: 6px; font-size: 12.5px; }
+  .porque summary { cursor: pointer; color: var(--acc-t); }
+  .porque p { margin: 4px 0; white-space: pre-wrap; word-break: break-word; }
   @media (max-width: 720px) { .camino { flex-direction: column; } .flecha { transform: rotate(90deg); height: 22px; } .grupo-cab { flex-wrap: wrap; } }
   @media (prefers-reduced-motion: reduce) { .plegar svg { transition: none; } }
   .fila { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 13px 18px; border-top: 1px solid var(--linea-2); background: none; border-left: 0; border-right: 0; border-bottom: 0; width: 100%; color: var(--texto); text-align: left; }
@@ -338,9 +341,14 @@ function nodo(p, anterior, rama) {
     if (an.estado === "hecha" && an.accion === "comentado") return n("mal", "Con comentarios de Hodor", punt, ver);
   }
   const det = puertasDe(p.pr);
-  if (det && !det.listo) {
-    const malas = det.puertas.filter((x) => !x.ok);
-    return n(malas.every((x) => x.espera) ? "no" : "mal", "Todavía no se puede analizar", malas.map((x) => esc(x.texto)).join(" · "), "");
+  if ((det && !det.listo) || (det && det.porque)) {
+    const malas = (det.puertas || []).filter((x) => !x.ok);
+    const pq = det.porque;
+    const nota = pq ? esc(pq.corto) : malas.map((x) => esc(x.texto)).join(" · ");
+    const detalle = pq && (pq.lineas || []).length
+      ? `<details class="porque"><summary>¿Por qué y cómo lo destrabo?</summary>${pq.lineas.map((l) => `<p>${esc(l)}</p>`).join("")}</details>` : "";
+    return n(malas.length && malas.every((x) => x.espera) && !pq ? "no" : "mal", "Todavía no se puede analizar", nota + detalle,
+      `<button class="btn" data-pedir="${esc(p.url)}" title="Vuelve a revisar las puertas y, si pasan, lo analiza">Revisar de nuevo</button>`);
   }
   return n("tu", "Falta tu análisis", "abierto · sin aprobar", `<button class="btn prim" data-pedir="${esc(p.url)}">Analizar</button>`);
 }
