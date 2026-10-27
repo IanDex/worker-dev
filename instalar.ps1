@@ -20,6 +20,8 @@ $disparo = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 $ajustes = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 99 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero)
 Register-ScheduledTask -TaskName "HodorV3Worker" -Action $accion -Trigger $disparo -Settings $ajustes -Force | Out-Null
 Stop-ScheduledTask -TaskName "HodorV3Worker" -ErrorAction SilentlyContinue
+Get-CimInstance Win32_Process -Filter "Name like 'python%'" | Where-Object { $_.CommandLine -like "*revisor_dev.py*" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+Start-Sleep -Seconds 2
 Start-ScheduledTask -TaskName "HodorV3Worker"
 Start-Sleep -Seconds 3
 Start-Process "http://127.0.0.1:7788"

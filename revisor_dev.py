@@ -38,7 +38,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "v3-worker 3.1.10"
+VERSION = "v3-worker 3.1.11"
 AQUI = Path(__file__).resolve().parent
 
 
@@ -1155,14 +1155,21 @@ def main() -> int:
     if "--una" in sys.argv:
         una_vuelta()
         return 0
+    con_panel = False
+    for _ in range(6):
+        con_panel = servir_panel()
+        if con_panel:
+            break
+        time.sleep(5)
+    if not con_panel:
+        log(f"el puerto {PUERTO} sigue ocupado: ya hay otro worker corriendo en este equipo, así que este se cierra")
+        reportar_falla("arranque del worker", f"había otro worker corriendo (puerto {PUERTO} ocupado): este se cerró para no analizar dos veces")
+        return 0
     log(f"{VERSION} arrancó · {API}")
     rescatar_planes()
     actualizar()
-    con_panel = servir_panel()
     revisado = time.time()
     while True:
-        if not con_panel:
-            con_panel = servir_panel()
         try:
             una_vuelta()
             plan_vuelta()
