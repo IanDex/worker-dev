@@ -195,6 +195,7 @@ function cabecera() {
     <span style="flex:1"></span>
     ${e.vista ? `<span class="chip c-warn"><span class="punto"></span>vista previa</span>` : `<span class="chip c-ok"><span class="punto"></span>worker conectado</span>`}
     <span class="mono" style="font-size:12px;color:var(--tenue)">${esc(VERSION)}</span>
+    ${e.vista ? "" : `<button class="btn fant" data-accion="actualizar" style="padding:5px 12px;font-size:12.5px" title="Busca una versión nueva del worker y, si hay, la instala y reinicia el panel">Buscar actualización</button>`}
     <button class="icono" data-accion="config" aria-label="Configuración"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"></path></svg></button>
     <span style="display:inline-flex;align-items:center;gap:8px"><span class="avatar">${esc(ini(d.dev))}</span><span style="color:var(--suave)">${esc(nombre(d.dev))}</span></span>
   </header>`;
@@ -891,6 +892,14 @@ document.addEventListener("click", async (e) => {
   }
   if ((el = t("[data-accion]"))) {
     const a = el.dataset.accion;
+    if (a === "actualizar") {
+      aviso("Buscando una versión nueva…");
+      const r = await api("/api/actualizar", {});
+      if (r.error) return aviso(r.error);
+      if (!r.nueva) return aviso(`Ya tienes la última versión (${(r.version || "").replace("v3-worker ", "")}).`);
+      aviso("Hay versión nueva: la instalé y el worker se reinicia. La página se recarga sola.");
+      return setTimeout(() => location.reload(), 6000);
+    }
     if (a === "archivados") { S.verArchivados = !S.verArchivados; S.pagina = 1; return pintar(); }
     if (a === "config") { S.config = true; S.paso = 1; return pintar(); }
     if (a === "cerrar-config") { S.config = false; return pintar(); }

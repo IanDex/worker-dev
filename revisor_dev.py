@@ -38,7 +38,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "v3-worker 3.1.9"
+VERSION = "v3-worker 3.1.10"
 AQUI = Path(__file__).resolve().parent
 
 
@@ -314,18 +314,23 @@ def _git(*args: str, espera: int = 120) -> subprocess.CompletedProcess:
                           env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
 
 
-def actualizar() -> bool:
+def actualizar(a_mano: bool = False) -> dict:
     """Si el repo del kit (el clon de worker-dev desde donde se instaló) tiene una versión nueva, la baja, copia los
-    archivos del worker a esta carpeta y reinicia el proceso. Nunca con un análisis o un plan corriendo."""
+    archivos del worker a esta carpeta y reinicia el proceso. Nunca con un análisis o un plan corriendo. Lo llama el
+    bucle cada 30 minutos y el botón «Buscar actualización» del panel."""
     repo = Path(str(CONFIG.get("repo_kit") or ""))
-    if VISTA or not (repo / ".git").exists() or _OCUPADO[0]:
-        return False
+    if VISTA:
+        return {"error": "vista previa: no se actualiza"}
+    if not (repo / ".git").exists():
+        return {"error": "tu worker no se instaló desde el repo worker-dev: clónalo y vuelve a correr el instalador"}
+    if _OCUPADO[0]:
+        return {"error": "hay un análisis o un plan corriendo: espera a que termine y vuelve a intentarlo"}
     try:
         if _git("fetch", "-q", "origin").returncode != 0:
             raise RuntimeError("git fetch falló (¿acceso al repo o red?)")
         local, remoto = _git("rev-parse", "HEAD").stdout.strip(), _git("rev-parse", "@{u}").stdout.strip()
         if not remoto or local == remoto:
-            return False
+            return {"ok": True, "nueva": False, "version": VERSION}
         r = _git("merge", "--ff-only", "@{u}")
         if r.returncode != 0:
             raise RuntimeError(f"no pude actualizar el repo (¿cambios locales?): {(r.stderr or r.stdout)[:200]}")
@@ -335,10 +340,13 @@ def actualizar() -> bool:
     except Exception as err:  # noqa: BLE001
         log(f"actualizar: {str(err)[:300]}")
         reportar_falla("actualizar el worker", err)
-        return False
-    log("hay una versión nueva del worker: reinicio para usarla")
+        return {"error": str(err)[:300]}
+    log("hay una versión nueva del worker: reinicio para usarla" + (" (pedido desde el panel)" if a_mano else ""))
+    if a_mano:
+        threading.Timer(1.5, lambda: os.execv(sys.executable, [sys.executable, *sys.argv])).start()
+        return {"ok": True, "nueva": True}
     os.execv(sys.executable, [sys.executable, *sys.argv])
-    return True
+    return {"ok": True, "nueva": True}
 
 
 # ── Datos locales (SQLite en tu máquina) ──
@@ -1060,6 +1068,8 @@ class Panel(BaseHTTPRequestHandler):
             return self._json(200, _api("POST", "/api/v3/pedir", {"url": cuerpo.get("url", "")}))
         if self.path == "/api/enviar":
             return self._json(200, _api("POST", "/api/v3/entregar", {"id": cuerpo.get("id")}))
+        if self.path == "/api/actualizar":
+            return self._json(200, actualizar(a_mano=True))
         if self.path == "/api/terminal":
             return self._json(200, abrir_terminal(str(cuerpo.get("pr", "")), str(cuerpo.get("repo", "")), str(cuerpo.get("rama", ""))))
         if self.path == "/api/ocultar":
