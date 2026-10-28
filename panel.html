@@ -348,6 +348,14 @@ function nodo(p, anterior, rama) {
     const nota = pq ? esc(pq.corto) : malas.map((x) => esc(x.texto)).join(" · ");
     const detalle = pq && (pq.lineas || []).length
       ? `<details class="porque"><summary>¿Por qué y cómo lo destrabo?</summary>${pq.lineas.map((l) => `<p>${esc(l)}</p>`).join("")}</details>` : "";
+    const soloSonar = malas.length && malas.every((x) => x.id === "sonar" && x.espera) && !pq;
+    if (soloSonar) {
+      const minutos = det.creado ? (Date.now() / 1000 - Number(det.creado)) / 60 : 0;
+      return minutos < 5
+        ? n("no", "Esperando a Sonar", "Sonar todavía no da su veredicto", "")
+        : n("mal", "Sonar no avisó", "Pasaron más de 5 minutos sin el aviso de Sonar: consulto su resultado directo y, si está en verde, lo analizo.",
+          `<button class="btn prim" data-pedir="${esc(p.url)}" title="Pregunta a Sonar por el quality gate de este commit y, si pasa, lo analiza">Consultar Sonar</button>`);
+    }
     return n(malas.length && malas.every((x) => x.espera) && !pq ? "no" : "mal", "Todavía no se puede analizar", nota + detalle,
       `<button class="btn" data-pedir="${esc(p.url)}" title="Vuelve a revisar las puertas y, si pasan, lo analiza">Revisar de nuevo</button>`);
   }
