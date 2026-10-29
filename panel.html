@@ -352,6 +352,11 @@ function nodo(p, anterior, rama) {
     const nota = pq ? esc(pq.corto) : malas.map((x) => esc(x.texto)).join(" · ");
     const detalle = pq && (pq.lineas || []).length
       ? `<details class="porque"><summary>¿Por qué y cómo lo destrabo?</summary>${pq.lineas.map((l) => `<p>${esc(l)}</p>`).join("")}</details>` : "";
+    const soloBuild = malas.length && malas.some((x) => x.id === "build") && malas.every((x) => x.id === "build" || (x.id === "sonar" && x.espera)) && !pq;
+    if (soloBuild) {
+      return n("mal", "CodeBuild falló", "Si fue tu código, corrígelo y haz push. Si el build ya dejó su aprobación en CodeCommit (falló solo el POST_BUILD), consulto CodeBuild y, si está aprobado, lo analizo.",
+        `<button class="btn prim" data-pedir="${esc(p.url)}" title="Revisa en CodeCommit si la regla del build está aprobada en este commit y, si pasa, lo analiza">Consultar CodeBuild</button>`);
+    }
     const soloSonar = malas.length && malas.every((x) => x.id === "sonar" && x.espera) && !pq;
     if (soloSonar) {
       const minutos = det.creado ? (Date.now() / 1000 - Number(det.creado)) / 60 : 0;
