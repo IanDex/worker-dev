@@ -38,7 +38,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "v3-worker 3.1.12"
+VERSION = "v3-worker 3.1.13"
 AQUI = Path(__file__).resolve().parent
 
 
@@ -172,11 +172,11 @@ def revisar(p: dict) -> None:
             evento = json.loads(linea)
         except ValueError:
             ruido = (ruido + [linea.strip()])[-5:] if linea.strip() else ruido
-            _SALIDA[:] = ruido
+            _salida()[:] = ruido
             continue
         if not isinstance(evento, dict):
             ruido = (ruido + [linea.strip()])[-5:]
-            _SALIDA[:] = ruido
+            _salida()[:] = ruido
             continue
         sesion = evento.get("session_id") or sesion
         if evento.get("type") == "assistant":
@@ -236,7 +236,16 @@ def limpiar_sesiones(dias: int = 14) -> None:
 
 
 TOPE_FALLOS = 3
-_SALIDA: list = []
+TOPE_AGENTES = 5
+_SALIDAS: dict = {}
+_CORRIENDO: dict = {}
+_EN_ESPERA: list = []
+_CORRIENDO_CANDADO = threading.Lock()
+
+
+def _salida() -> list:
+    """Las últimas líneas que no eran JSON del claude de este hilo: cada análisis corre en el suyo."""
+    return _SALIDAS.setdefault(threading.get_ident(), [])
 
 
 def _fallos(fila: int, sha: str) -> int:
@@ -253,40 +262,67 @@ def _cortar(p: dict, n: int, detalle: str) -> None:
         log(f"#{p.get('pr')}: no pude avisarle a Hodor que se cortó: {res['error']}")
 
 
-def una_vuelta() -> int:
+def _correr(p: dict, previos: int) -> None:
+    fila = int(p["id"])
+    _salida().clear()
+    try:
+        revisar(p)
+        with _DB_CANDADO, _db() as con:
+            con.execute("DELETE FROM fallos WHERE fila = ?", (fila,))
+    except Exception as err:  # noqa: BLE001 — se reintenta en la próxima vuelta, hasta el tope
+        donde = traceback.extract_tb(err.__traceback__)[-1] if err.__traceback__ else None
+        detalle = f"{err} (en {Path(donde.filename).name}:{donde.lineno})" if donde else str(err)
+        n = previos + 1
+        with _DB_CANDADO, _db() as con:
+            con.execute("INSERT OR REPLACE INTO fallos(fila, pr, sha, n, error, en) VALUES(?,?,?,?,?,?)",
+                        (fila, str(p.get("pr")), p.get("paquete_sha") or "", n, detalle[:1000], time.time()))
+        log(f"#{p.get('pr')}: falló ({n} de {TOPE_FALLOS}): {detalle[:300]}")
+        ultimas = _salida()
+        salida = f" · últimas líneas: {' | '.join(ultimas)[-400:]}" if ultimas else ""
+        reportar_falla(f"análisis de #{p.get('pr')} (intento {n} de {TOPE_FALLOS})", detalle + salida, siempre=True)
+        if n >= TOPE_FALLOS:
+            reportar_falla(f"análisis de #{p.get('pr')}: cortado tras {n} fallos", "no se vuelve a intentar hasta que el dev lo pida de nuevo", siempre=True)
+            _cortar(p, n, detalle)
+    finally:
+        _SALIDAS.pop(threading.get_ident(), None)
+        with _CORRIENDO_CANDADO:
+            _CORRIENDO.pop(fila, None)
+
+
+def una_vuelta(esperar: bool = False) -> int:
+    """Cada análisis pendiente arranca en su propio hilo, hasta TOPE_AGENTES a la vez. Lo que pasa del tope espera su turno
+    y el panel le avisa al dev."""
     cola = _api("GET", "/api/v3/cola")
     if cola.get("error"):
         log(f"cola: {cola['error']}")
         return 0
-    hechas = 0
+    hilos, espera = [], []
     for p in cola.get("pendientes") or []:
         fila = int(p["id"])
+        with _CORRIENDO_CANDADO:
+            if fila in _CORRIENDO:
+                continue
+            if len(_CORRIENDO) >= TOPE_AGENTES:
+                espera.append(str(p.get("pr")))
+                continue
         previos = _fallos(fila, p.get("paquete_sha") or "")
         if previos >= TOPE_FALLOS:
             with _DB_CANDADO, _db() as con:
                 r = con.execute("SELECT error FROM fallos WHERE fila = ?", (fila,)).fetchone()
             _cortar(p, previos, (r["error"] if r else "") or "")
             continue
-        _SALIDA.clear()
-        try:
-            revisar(p)
-            hechas += 1
-            with _DB_CANDADO, _db() as con:
-                con.execute("DELETE FROM fallos WHERE fila = ?", (fila,))
-        except Exception as err:  # noqa: BLE001 — se reintenta en la próxima vuelta, hasta el tope
-            donde = traceback.extract_tb(err.__traceback__)[-1] if err.__traceback__ else None
-            detalle = f"{err} (en {Path(donde.filename).name}:{donde.lineno})" if donde else str(err)
-            n = previos + 1
-            with _DB_CANDADO, _db() as con:
-                con.execute("INSERT OR REPLACE INTO fallos(fila, pr, sha, n, error, en) VALUES(?,?,?,?,?,?)",
-                            (fila, str(p.get("pr")), p.get("paquete_sha") or "", n, detalle[:1000], time.time()))
-            log(f"#{p.get('pr')}: falló ({n} de {TOPE_FALLOS}): {detalle[:300]}")
-            salida = f" · últimas líneas: {' | '.join(_SALIDA)[-400:]}" if _SALIDA else ""
-            reportar_falla(f"análisis de #{p.get('pr')} (intento {n} de {TOPE_FALLOS})", detalle + salida, siempre=True)
-            if n >= TOPE_FALLOS:
-                reportar_falla(f"análisis de #{p.get('pr')}: cortado tras {n} fallos", "no se vuelve a intentar hasta que el dev lo pida de nuevo", siempre=True)
-                _cortar(p, n, detalle)
-    return hechas
+        with _CORRIENDO_CANDADO:
+            _CORRIENDO[fila] = str(p.get("pr"))
+        hilo = threading.Thread(target=_correr, args=(p, previos), daemon=True)
+        hilo.start()
+        hilos.append(hilo)
+    if espera and espera != _EN_ESPERA:
+        log(f"{TOPE_AGENTES} análisis corriendo: esperan su turno {', '.join('#' + x for x in espera)}")
+    _EN_ESPERA[:] = espera
+    if esperar:
+        for hilo in hilos:
+            hilo.join()
+    return len(hilos)
 
 
 # ── Fallas y actualización automática ──
@@ -323,7 +359,7 @@ def actualizar(a_mano: bool = False) -> dict:
         return {"error": "vista previa: no se actualiza"}
     if not (repo / ".git").exists():
         return {"error": "tu worker no se instaló desde el repo worker-dev: clónalo y vuelve a correr el instalador"}
-    if _OCUPADO[0]:
+    if _OCUPADO[0] or _CORRIENDO:
         return {"error": "hay un análisis o un plan corriendo: espera a que termine y vuelve a intentarlo"}
     try:
         if _git("fetch", "-q", "origin").returncode != 0:
@@ -584,11 +620,11 @@ def _claude_correr(orden: list, pedido: str, cwd: Path, reanudar: str, espera: i
             evento = json.loads(linea)
         except ValueError:
             ruido = (ruido + [linea.strip()])[-5:] if linea.strip() else ruido
-            _SALIDA[:] = ruido
+            _salida()[:] = ruido
             continue
         if not isinstance(evento, dict):
             ruido = (ruido + [linea.strip()])[-5:]
-            _SALIDA[:] = ruido
+            _salida()[:] = ruido
             continue
         sesion = evento.get("session_id") or sesion
         if evento.get("type") == "result":
@@ -1006,6 +1042,7 @@ def datos_panel() -> dict:
         planes = {r["fila"]: {"estado": r["estado"], "error": r["error"], "enviado": r["enviado"]} for r in con.execute("SELECT fila, estado, error, enviado FROM planes")}
         sesiones = [r["fila"] for r in con.execute("SELECT fila FROM sesiones")]
     return {"dev": mis.get("dev"), "analisis": mis.get("analisis") or [], "pedidos": mis.get("pedidos") or [],
+            "agentes": {"corriendo": sorted(_CORRIENDO.values()), "tope": TOPE_AGENTES, "en_espera": list(_EN_ESPERA)},
             "detectados": det.get("detectados") or [], "prs": todos.get("prs") or [], "ocultos": ocultos, "historias": historias, "sugerencias": sugerencias,
             "locales": locales, "planes": planes, "sesiones": sesiones, "estado": estado_panel()}
 
@@ -1153,7 +1190,7 @@ def main() -> int:
         log("no encuentro el CLI `claude`: instálalo e inicia sesión con tu cuenta")
         return 1
     if "--una" in sys.argv:
-        una_vuelta()
+        una_vuelta(esperar=True)
         return 0
     con_panel = False
     for _ in range(6):

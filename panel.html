@@ -263,7 +263,11 @@ function vistaMis() {
   const pedidos = (d.pedidos || []).filter((p) => !p.resultado || cerrados[`pedido:${p.pr}:${p.en}`] !== "cerrado").map((p) => p.resultado
     ? `<div class="aviso c-bad" style="display:flex;gap:10px;align-items:flex-start"><span style="flex:1">${esc(String(p.resultado).replace(/^rechazado:\s*/, ""))}</span><button class="btn fant" style="padding:2px 8px" data-cerrar-pedido="${esc(`pedido:${p.pr}:${p.en}`)}" aria-label="Quitar este aviso" title="Quitar este aviso">✕</button></div>`
     : `<div class="aviso c-acc">#${esc(p.pr)}: pedido ${esc(hace(p.en))}, Hodor lo está validando…</div>`).join("");
-  return `${pedidos}
+  const ag = d.agentes || {};
+  const tope = (ag.en_espera || []).length
+    ? `<div class="aviso c-warn">Ya tienes ${esc(ag.tope)} agentes corriendo (${(ag.corriendo || []).map((x) => "#" + esc(x)).join(", ")}): espera a que alguno termine. En cola: ${ag.en_espera.map((x) => "#" + esc(x)).join(", ")}.</div>`
+    : "";
+  return `${tope}${pedidos}
     <div class="barra" role="group" aria-label="Filtrar por estado de la historia">
       ${ESTADOS_HU.map(([k, l]) => `<button class="filtro ${S.filtroHu === k ? "on" : ""}" data-filtro="${k}">${l}${c[k] ? ` <span class="mono">${c[k]}</span>` : ""}</button>`).join("")}
       <input class="busca" data-busca placeholder="Buscar historia, repo o PR" value="${esc(S.busca)}" aria-label="Buscar">
