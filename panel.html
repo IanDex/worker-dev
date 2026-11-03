@@ -131,7 +131,7 @@
 const CLAVE = "__CLAVE__", VERSION = "__VERSION__";
 const ESTADOS_HU = [["todas", "Todas"], ["progreso", "En progreso"], ["pr staging", "PR staging"], ["staging", "Staging"], ["bloqueado", "Bloqueado"], ["produccion", "Producción"], ["sin", "Sin Jira"]];
 const POR_PAGINA = 6, POR_PAGINA_DET = 6;
-const S = { plan: {}, debate: {}, pensando: "", abiertos: new Set(), tab: "mis", filtroHu: "todas", busca: "", pagina: 1, pagDet: 1, verArchivados: false, menu: "", cajon: null, verIgnorados: false, tipoSug: "idea", config: false, paso: 1, datos: null };
+const S = { par: null, plan: {}, debate: {}, pensando: "", abiertos: new Set(), tab: "mis", filtroHu: "todas", busca: "", pagina: 1, pagDet: 1, verArchivados: false, menu: "", cajon: null, verIgnorados: false, tipoSug: "idea", config: false, paso: 1, datos: null };
 
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ahora = () => Date.now() / 1000;
@@ -810,6 +810,50 @@ function vistaConfig() {
   </div></div>`;
 }
 
+function vistaPorAprobar() {
+  const pa = S.datos.por_aprobar || {}, prs = pa.prs || [];
+  const tono = { listo: "c-ok", hodor: "c-ok", observaciones: "c-nar", sin_revision: "c-bad", fuera_dev: "c-bad", release: "c-warn", release_reemplazo: "c-info" };
+  const rotulo = { listo: "Pasó el worker", hodor: "Hodor lo aprobó", observaciones: "Con observaciones", sin_revision: "Sin revisión del worker", fuera_dev: "Código fuera de development", release: "Falta tu visto bueno", release_reemplazo: "Reemplazo posible" };
+  const fila = (x) => {
+    const s = x.situacion || {}, w = s.worker || {};
+    const nombre = (c) => String(c || "").split("@")[0].split(".").slice(0, 2).map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(" ");
+    const detalle = [w.puntaje != null ? `${w.puntaje}/100` : "", w.sello ? "sello válido" : "", s.codigo && s.codigo.aplica ? (s.codigo.ok ? "código en development ✓" : s.codigo.sabido ? "código fuera de development ✗" : "comparando con development…") : ""].filter(Boolean).join(" · ");
+    return `<div class="det">
+      <div style="display:flex;flex-direction:column;gap:8px;min-width:0;flex:999 1 420px">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><b>${esc(x.repo)}</b><span class="mono" style="color:var(--tenue)">#${esc(x.pr)}</span><span class="chip c-info">${esc(x.destino)}</span><span class="chip ${tono[s.clave] || "c-off"}">${esc(rotulo[s.clave] || s.clave || "—")}</span>${x.aprobado_por_mi ? `<span class="chip c-ok">✓ ya lo aprobaste</span>` : ""}</div>
+        <span style="color:var(--suave);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.historia || "")}${x.historia ? " · " : ""}${esc(x.titulo || "")} · de ${esc(nombre(x.autor))}</span>
+        <span style="font-size:12.5px;color:var(--tenue)">${esc(s.texto || "")}${detalle ? ` · ${esc(detalle)}` : ""}</span>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        ${w.fila ? `<button class="btn fant" data-par="${esc(w.fila)}">Ver análisis</button>` : ""}
+        <a class="btn ${s.clave === "listo" || s.clave === "release" || s.clave === "release_reemplazo" ? "prim" : "fant"}" href="${esc(x.url)}" target="_blank" rel="noopener">Abrir en CodeCommit</a>
+      </div>
+    </div>`;
+  };
+  const pendientes = prs.filter((x) => !x.aprobado_por_mi), hechos = prs.filter((x) => x.aprobado_por_mi);
+  return `<p style="margin:0;color:var(--tenue);font-size:13px">PRs de otros en tus repos (${esc((pa.repos || []).join(", "))}) que puedes aprobar. Antes de aprobar mira si pasaron por el worker de su autor y, en master, si todo su código ya está en development. Aprobar es tu decisión: esto no bloquea, pero cada aprobación queda registrada con lo que el PR traía en ese momento. Si aprobaste development o master de una historia, también te toca el visto bueno del release.</p>
+    ${pendientes.length ? `<section class="grupo">${pendientes.map(fila).join("")}</section>` : `<p class="vacio">No hay PRs esperando tu aprobación.</p>`}
+    ${hechos.length ? `<details class="grupo" style="padding:0"><summary style="cursor:pointer;padding:12px 18px;color:var(--suave)">Ya los aprobaste · ${hechos.length}</summary>${hechos.map(fila).join("")}</details>` : ""}`;
+}
+
+function cajonPar() {
+  const x = S.par;
+  if (!x) return "";
+  if (x.cargando) return `<div class="fondo-cajon" data-cerrar></div><aside class="cajon" role="dialog" aria-modal="true" aria-label="Análisis"><p class="vacio">Cargando el análisis…</p></aside>`;
+  if (x.error) return `<div class="fondo-cajon" data-cerrar></div><aside class="cajon" role="dialog" aria-modal="true" aria-label="Análisis"><div class="aviso c-bad">${esc(x.error)}</div><button class="btn fant" data-cerrar>Cerrar</button></aside>`;
+  const sevChip = (s) => `<span class="chip ${s === "critica" ? "c-bad" : s === "alta" ? "c-nar" : s === "media" ? "c-warn" : "c-off"}">${esc(s)}</span>`;
+  const hall = (x.hallazgos || []).filter((h) => !h._retirado);
+  return `<div class="fondo-cajon" data-cerrar></div>
+  <aside class="cajon" role="dialog" aria-modal="true" aria-label="Análisis de ${esc(x.repo)} #${esc(x.pr)}">
+    <div style="display:flex;align-items:flex-start;gap:12px"><div style="flex:1;display:flex;flex-direction:column;gap:4px"><span style="color:var(--tenue);font-size:12px">ANÁLISIS DEL WORKER DEL AUTOR · SOLO LECTURA</span><b style="font-size:20px">${esc(x.repo)} #${esc(x.pr)}</b><span style="color:var(--suave)">${esc(x.historia || "")} · commit <span class="mono">${esc(x.commit || "—")}</span></span></div>
+      <button class="icono" data-cerrar aria-label="Cerrar" style="width:40px;height:40px">✕</button></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><span class="chip ${x.freno ? "c-bad" : "c-ok"}">${x.freno ? `No se puede entregar: ${esc(x.freno)}` : "Nada que bloquee"}</span><span class="chip c-info mono">${esc(x.puntaje ?? "—")}/100</span>${x.sello ? `<span class="chip c-ok">sello válido</span>` : ""}<span class="chip ${x.entregado ? "c-ok" : "c-warn"}">${x.entregado ? "entregado" : "sin entregar"}</span></div>
+    ${x.resumen ? `<p style="margin:0;color:var(--suave);line-height:1.6">${esc(x.resumen)}</p>` : ""}
+    <span style="color:var(--tenue);font-size:12px">HALLAZGOS · ${hall.length}</span>
+    ${hall.length ? hall.map((h) => `<article class="h"><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">${sevChip(h.severidad)}${h._idor ? `<span class="chip c-bad">IDOR</span>` : ""}<b>${esc(h.titulo)}</b></div><span class="mono" style="font-size:12px;color:var(--tenue)">${esc(h.archivo || "")}${h.linea ? `:${esc(h.linea)}` : ""}</span><span style="color:var(--suave)">${esc(h.comentario || "")}</span></article>`).join("") : `<p class="vacio">El análisis no dejó hallazgos.</p>`}
+  </aside>`;
+}
+
 function pintar() {
   const app = document.getElementById("app");
   const foco = document.activeElement && document.activeElement.matches("[data-busca]");
@@ -824,11 +868,13 @@ function pintar() {
       <nav class="tabs" aria-label="Secciones">
         <button class="${S.tab === "mis" ? "on" : ""}" data-tab="mis">Mis PRs<span class="n">${nMis}</span></button>
         <button class="${S.tab === "det" ? "on" : ""}" data-tab="det">Detectados<span class="n" style="color:var(--warn)">${nDet}</span></button>
+        ${(d.por_aprobar || {}).aprobador ? `<button class="${S.tab === "apr" ? "on" : ""}" data-tab="apr">Por aprobar<span class="n">${(d.por_aprobar.prs || []).filter((x) => !x.aprobado_por_mi).length}</span></button>` : ""}
         <button class="${S.tab === "sug" ? "on" : ""}" data-tab="sug">Sugerencias</button>
       </nav>
-      ${S.tab === "mis" ? vistaMis() : S.tab === "det" ? vistaDetectados() : vistaSugerencias()}
+      ${S.tab === "mis" ? vistaMis() : S.tab === "det" ? vistaDetectados() : S.tab === "apr" && (d.por_aprobar || {}).aprobador ? vistaPorAprobar() : vistaSugerencias()}
     </main>
     ${S.cajon ? cajon() : ""}
+    ${S.par ? cajonPar() : ""}
     ${S.config ? vistaConfig() : ""}`;
   if (foco) { const b = app.querySelector("[data-busca]"); b.focus(); b.setSelectionRange(b.value.length, b.value.length); }
 }
@@ -852,7 +898,7 @@ let tBusca;
 document.addEventListener("input", (e) => {
   if (e.target.matches("[data-busca]")) { clearTimeout(tBusca); tBusca = setTimeout(() => { S.busca = e.target.value; S.pagina = 1; pintar(); }, 250); }
 });
-document.addEventListener("keydown", (e) => { if (e.key === "Escape" && (S.cajon || S.menu)) { S.cajon = null; S.menu = ""; pintar(); } });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && (S.cajon || S.menu || S.par)) { S.cajon = null; S.par = null; S.menu = ""; pintar(); } });
 document.addEventListener("click", async (e) => {
   const t = (sel) => e.target.closest(sel);
   let el;
@@ -898,7 +944,12 @@ document.addEventListener("click", async (e) => {
     return cargarCajon(id);
   }
   if ((el = t("[data-plan-otra]"))) { const r = await api("/api/plan/otra-vez", { fila: el.dataset.planOtra }); aviso(r.error || "Va otra vez: mismos escenarios."); await cargar(); return cargarCajon(el.dataset.planOtra); }
-  if ((el = t("[data-cerrar]"))) { S.cajon = null; return pintar(); }
+  if ((el = t("[data-cerrar]"))) { S.cajon = null; S.par = null; return pintar(); }
+  if ((el = t("[data-par]"))) {
+    S.par = { cargando: true }; pintar();
+    try { S.par = await (await fetch(`/api/analisis-par/${encodeURIComponent(el.dataset.par)}`, { headers: { "X-Panel": CLAVE } })).json(); } catch { S.par = { error: "no pude traer el análisis" }; }
+    return pintar();
+  }
   if ((el = t("[data-pedir]"))) return pedir(el.dataset.pedir);
   if ((el = t("[data-ocultar]"))) { await api("/api/ocultar", { pr: el.dataset.ocultar, tipo: el.dataset.tipo }); S.verIgnorados = !el.dataset.tipo; return cargar(); }
   if ((el = t("[data-tiposug]"))) { S.tipoSug = el.dataset.tiposug; const v = document.getElementById("sug").value; pintar(); document.getElementById("sug").value = v; return; }

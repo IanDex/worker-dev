@@ -38,7 +38,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "v3-worker 3.1.13"
+VERSION = "v3-worker 3.2.0"
 AQUI = Path(__file__).resolve().parent
 
 
@@ -1024,6 +1024,7 @@ def datos_panel() -> dict:
         return {"error": mis["error"]}
     det = _api("GET", "/api/v3/detectados")
     todos = _api("GET", "/api/v3/historias")
+    por_aprobar = _api("GET", "/api/v3/por-aprobar")
     with _DB_CANDADO, _db() as con:
         ocultos = {r["pr"]: r["tipo"] for r in con.execute("SELECT pr, tipo FROM ocultos")}
         sugerencias = [dict(r) for r in con.execute("SELECT * FROM sugerencias ORDER BY id DESC LIMIT 50")]
@@ -1044,7 +1045,8 @@ def datos_panel() -> dict:
     return {"dev": mis.get("dev"), "analisis": mis.get("analisis") or [], "pedidos": mis.get("pedidos") or [],
             "agentes": {"corriendo": sorted(_CORRIENDO.values()), "tope": TOPE_AGENTES, "en_espera": list(_EN_ESPERA)},
             "detectados": det.get("detectados") or [], "prs": todos.get("prs") or [], "ocultos": ocultos, "historias": historias, "sugerencias": sugerencias,
-            "locales": locales, "planes": planes, "sesiones": sesiones, "estado": estado_panel()}
+            "locales": locales, "planes": planes, "sesiones": sesiones, "estado": estado_panel(),
+            "por_aprobar": por_aprobar if por_aprobar.get("aprobador") else {"aprobador": False, "prs": []}}
 
 
 class Panel(BaseHTTPRequestHandler):
@@ -1085,6 +1087,9 @@ class Panel(BaseHTTPRequestHandler):
         if self.path.startswith("/api/debate/"):
             fila = int(self.path.rsplit("/", 1)[-1] or 0)
             return self._json(200, {"chat": chat_de(fila, "debate")})
+        if self.path.startswith("/api/analisis-par/"):
+            fila = self.path.rsplit("/", 1)[-1]
+            return self._json(200, _api("GET", f"/api/v3/analisis?id={urllib.parse.quote(fila)}"))
         if self.path.startswith("/api/analisis/"):
             pr = self.path.rsplit("/", 1)[-1]
             archivo = ANALISIS / f"pr{pr}.md"
