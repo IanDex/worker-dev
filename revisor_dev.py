@@ -38,7 +38,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "v3-worker 3.2.0"
+VERSION = "v3-worker 3.2.1"
 AQUI = Path(__file__).resolve().parent
 
 
@@ -132,6 +132,45 @@ def firma(sello: dict, final: str) -> str:
     return hmac.new(TOKEN.encode(), cuerpo.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
+REGLAS = TRABAJO / "reglas"
+
+
+def huella_reglas(raiz: Path) -> str:
+    partes = sorted((str(x.relative_to(raiz)).replace("\\", "/"), hashlib.sha256(x.read_bytes()).hexdigest())
+                    for x in raiz.rglob("*") if x.is_file() and "__pycache__" not in x.parts)
+    return hashlib.sha256(json.dumps(partes).encode()).hexdigest()
+
+
+def reglas(sha: str) -> Path:
+    """Las reglas del revisor (lineamientos, SISTEMA.md, skill) de ese hash. Se bajan una vez y quedan guardadas; si la
+    copia guardada no da el hash, se vuelve a bajar."""
+    carpeta = REGLAS / sha
+    if carpeta.is_dir() and huella_reglas(carpeta) == sha:
+        return carpeta
+    enlace = _api("GET", f"/api/v3/reglas?sha={sha}")
+    if enlace.get("error"):
+        raise RuntimeError(f"no pude pedir las reglas: {enlace['error']}")
+    with urllib.request.urlopen(enlace["url"], timeout=300) as r:
+        crudo = r.read()
+    temporal = REGLAS / f"{sha}.bajando-{int(time.time())}"
+    shutil.rmtree(temporal, ignore_errors=True)
+    temporal.mkdir(parents=True)
+    with tarfile.open(fileobj=io.BytesIO(crudo), mode="r:gz") as tar:
+        for m in tar.getmembers():
+            if m.name.startswith("/") or ".." in Path(m.name).parts:
+                raise RuntimeError(f"ruta inválida en las reglas: {m.name}")
+        tar.extractall(temporal)
+    if huella_reglas(temporal) != sha:
+        shutil.rmtree(temporal, ignore_errors=True)
+        raise RuntimeError("las reglas que bajé no tienen el hash que dice Hodor")
+    shutil.rmtree(carpeta, ignore_errors=True)
+    temporal.rename(carpeta)
+    for vieja in REGLAS.iterdir():
+        if vieja.is_dir() and vieja.name != sha and time.time() - vieja.stat().st_mtime > 7 * 86400:
+            shutil.rmtree(vieja, ignore_errors=True)
+    return carpeta
+
+
 def bajar(p: dict) -> Path:
     enlace = _api("GET", f"/api/v3/paquete?id={p['id']}")
     if enlace.get("error"):
@@ -150,6 +189,8 @@ def bajar(p: dict) -> Path:
             if m.name.startswith("/") or ".." in Path(m.name).parts:
                 raise RuntimeError(f"ruta inválida en el paquete: {m.name}")
         tar.extractall(destino)
+    if p.get("reglas_sha"):
+        shutil.copytree(reglas(p["reglas_sha"]), destino, dirs_exist_ok=True)
     return destino
 
 
@@ -200,7 +241,8 @@ def revisar(p: dict) -> None:
     proc.wait()
     if not final:
         raise RuntimeError(f"claude no devolvió resultado (código {proc.returncode})" + (f": {' | '.join(ruido)[-400:]}" if ruido else ""))
-    sello = {"fila": p["id"], "pr": str(p["pr"]), "paquete_sha": p["paquete_sha"], "desafio": p["desafio"], "sesion": sesion,
+    sello = {"fila": p["id"], "pr": str(p["pr"]), "paquete_sha": p["paquete_sha"], "reglas_sha": p.get("reglas_sha") or "",
+             "desafio": p["desafio"], "sesion": sesion,
              "turnos": turnos, "segundos": int(time.time() - inicio), "version": VERSION, "kit": huella_kit()}
     res = _api("POST", "/api/v3/resultado", {"sello": sello, "final": final, "costo": costo, "firma": firma(sello, final)})
     if res.get("error"):
@@ -287,6 +329,16 @@ def _correr(p: dict, previos: int) -> None:
         _SALIDAS.pop(threading.get_ident(), None)
         with _CORRIENDO_CANDADO:
             _CORRIENDO.pop(fila, None)
+        atento(5 * 60)
+
+
+_ATENTO = [0.0]
+
+
+def atento(segundos: float = 30 * 60) -> None:
+    """La cola de Hodor solo se pregunta mientras hay algo pedido: después del botón del dev, mientras Hodor arma el
+    paquete y mientras un análisis corre o se reintenta. Sin pedidos, el worker no llama a Hodor."""
+    _ATENTO[0] = max(_ATENTO[0], time.time() + segundos)
 
 
 def una_vuelta(esperar: bool = False) -> int:
@@ -296,6 +348,8 @@ def una_vuelta(esperar: bool = False) -> int:
     if cola.get("error"):
         log(f"cola: {cola['error']}")
         return 0
+    if cola.get("pendientes") or cola.get("en_proceso"):
+        atento()
     hilos, espera = [], []
     for p in cola.get("pendientes") or []:
         fila = int(p["id"])
@@ -1107,8 +1161,10 @@ class Panel(BaseHTTPRequestHandler):
         if VISTA and self.path in ACCIONES_REMOTAS:
             return self._json(200, {"error": "vista previa: esta acción está desactivada (no actúa en nombre del dev)"})
         if self.path == "/api/pedir":
+            atento()
             return self._json(200, _api("POST", "/api/v3/pedir", {"url": cuerpo.get("url", "")}))
         if self.path == "/api/enviar":
+            atento()
             return self._json(200, _api("POST", "/api/v3/entregar", {"id": cuerpo.get("id")}))
         if self.path == "/api/actualizar":
             return self._json(200, actualizar(a_mano=True))
@@ -1211,9 +1267,11 @@ def main() -> int:
     rescatar_planes()
     actualizar()
     revisado = time.time()
+    atento(2 * 60)
     while True:
         try:
-            una_vuelta()
+            if time.time() < _ATENTO[0]:
+                una_vuelta()
             plan_vuelta()
             limpiar_sesiones()
         except Exception as err:  # noqa: BLE001
