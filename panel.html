@@ -1852,6 +1852,7 @@ setInterval(() => {
 }, 5000);
 const ocupado = () => S.cajon || S.config || S.menu || S.ayuda || (document.activeElement && document.activeElement.matches("textarea,input,select"));
 setInterval(() => { if (!document.hidden && !ocupado() && hayEnCurso()) cargar("mis"); }, 5000);
+setInterval(() => { if (!document.hidden && !ocupado() && !hayEnCurso()) cargar("mis"); }, 60000);
 setInterval(async () => {
   const pr = S.datos && S.datos.estado ? S.datos.estado.pruebas || {} : {};
   if (document.hidden || !S.config || !pr.bo_leyendo || (document.activeElement && document.activeElement.matches("textarea,input,select"))) return;
