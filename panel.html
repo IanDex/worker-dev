@@ -691,7 +691,7 @@ function vistaMis() {
     ? `<div class="aviso c-warn">Ya tienes ${esc(ag.tope)} agentes corriendo (${(ag.corriendo || []).map((x) => "#" + esc(x)).join(", ")}): espera a que alguno termine. En cola: ${ag.en_espera.map((x) => "#" + esc(x)).join(", ")}.</div>`
     : "";
   const esperan = teEsperan(historias);
-  return `<div class="titulo-pag"><div style="flex-grow:1"><h1>Mis PRs</h1><p>${c.pendientes || 0} historia${c.pendientes === 1 ? "" : "s"} pendiente${c.pendientes === 1 ? "" : "s"}${esperan ? ` · ${esperan} PR${esperan === 1 ? "" : "s"} por analizar, entregar o corregir` : ""} · tus PRs de los últimos 60 días, de development a master y a release</p></div>
+  return `<div class="titulo-pag"><div style="flex-grow:1"><h1>Mis PRs</h1><p>${c.pendientes || 0} historia${c.pendientes === 1 ? "" : "s"} pendiente${c.pendientes === 1 ? "" : "s"}${esperan ? ` · ${esperan} PR${esperan === 1 ? "" : "s"} por analizar, entregar o corregir` : ""} · tus PRs de los últimos 60 días, ${S.datos.sin_dev ? "de master a release" : "de development a master y a release"}</p></div>
       <button class="btn" data-tab="analizar">+ Analizar otro PR</button></div>
     ${avisoPedido()}${tope}${pedidos}
     <div class="barra barra-mis">
@@ -731,6 +731,7 @@ function semaforo(h) {
 }
 
 const RAMAS = [["development", "dev"], ["master", "ci"], ["release", "prod"]];
+const ramasDev = () => (S.datos && S.datos.sin_dev ? RAMAS.slice(1) : RAMAS);
 
 function esIdor(d) { return (d && d.hallazgos || []).some((h) => /idor/i.test(`${h.titulo || ""} ${h.comentario || ""} ${h.categoria || ""}`)); }
 function bloqueo(d) {
@@ -797,6 +798,7 @@ function nodo(p, anterior, rama) {
   };
   if (!p) {
     if (rama === "development") return n("no", "Sin PR", "", "");
+    if (!anterior) return n("puede", "Puedes abrir el PR", "Pega su link en Analizar", "");
     if (anterior && anterior.tono === "hecho") return n("puede", "Puedes abrir el PR", rama === "release" ? "Al analizarlo corre el plan de pruebas en ci" : "Pega su link en Analizar", "");
     return n("no", "Sin PR todavía", rama === "master" ? "Se abre cuando development esté mergeado" : "Después de master", "");
   }
@@ -846,12 +848,12 @@ function nodo(p, anterior, rama) {
 
 function caminoRepo(repo, prs) {
   const nodos = [];
-  for (const [rama, a] of RAMAS) {
+  for (const [rama, a] of ramasDev()) {
     const lista = prs.filter((p) => amb(p) === a).sort((x, y) => (y.creado || 0) - (x.creado || 0));
     const vivo = lista.find((p) => p.estado === "abierto") || lista.find((p) => p.estado === "mergeado") || lista[0];
     nodos.push({ rama, p: vivo, ...nodo(vivo, nodos[nodos.length - 1], rama) });
   }
-  return { repo, nodos, html: `<div class="camino" role="group" aria-label="${esc(repo)}: development, master y release"><div class="camino-repo">${esc(repo)}</div>${nodos.map((x) => x.html).join("")}</div>` };
+  return { repo, nodos, html: `<div class="camino" role="group" aria-label="${esc(repo)}: ${ramasDev().map((r) => r[0]).join(", ")}"><div class="camino-repo">${esc(repo)}</div>${nodos.map((x) => x.html).join("")}</div>` };
 }
 
 function siguiente(caminos) {
@@ -1238,7 +1240,7 @@ function cajon() {
   if (hist !== null) tabs.push(["hist", "Historial", hist ? (hist.rondas || []).length : ""]);
   if (!tabs.some(([k]) => k === S.dtab)) S.dtab = "hall";
   const reglasRamas = x.reglas && Object.keys(x.reglas.ramas || {}).length ? `<section class="caja" style="${x.reglas.ok ? "" : "background:var(--bad-f);border-color:var(--bad)"}">
-      <span class="rot" style="${x.reglas.ok ? "" : "color:var(--bad)"}">Reglas de ramas · ${x.reglas.destino === "release" ? "a release solo entra lo que ya está en master y development" : "a master solo entra lo que ya está en development"}</span>
+      <span class="rot" style="${x.reglas.ok ? "" : "color:var(--bad)"}">Reglas de ramas · ${`a ${x.reglas.destino} solo entra lo que ya está en ${Object.keys(x.reglas.ramas || {}).join(" y ") || "la rama anterior"}`}</span>
       ${Object.entries(x.reglas.ramas).map(([rama, r]) => `<div style="display:flex;flex-direction:column;gap:4px"><span>${r.ok ? `<span class="chip c-ok">${I_OK} ${esc(rama)}</span> todo el código ya está en ${esc(rama)}` : `<span class="chip c-bad">${esc(rama)}</span> ${r.completo ? `falta código en ${esc(rama)}` : `no pude comparar todo contra ${esc(rama)}`}`}</span>
         ${(r.faltan || []).map((f) => `<span class="mono" style="font-size:12px;color:var(--bad);padding-left:8px">${esc(f.ruta)}${f.lineas ? ` · ${esc(f.lineas)} línea(s)` : ""}${f.motivo ? ` · ${esc(f.motivo)}` : ""}</span>`).join("")}</div>`).join("")}
       ${x.reglas.ok ? "" : `<span style="font-size:13px;color:var(--bad)">Si lo envías así, Hodor lo deja esperando hasta que ese código llegue a la rama anterior.</span>`}
@@ -1371,7 +1373,7 @@ function vistaConfig() {
     <ol aria-label="Pasos">
       <li style="padding:0 8px 14px"><h2 id="cfg-titulo" style="margin:0;font-size:18px;font-weight:600">Configura tu worker</h2><p style="margin:4px 0 0;font-size:12.5px;color:var(--suave)">${listos} de 5 listos · todo queda en tu máquina</p></li>
       ${nav}
-      <li style="font-size:12.5px;color:var(--suave);line-height:1.5;padding:12px 8px 0">Sin los pasos 3 a 5 puedes analizar PRs a development y master, pero <b style="color:var(--warn)">no puedes entregar un PR a producción</b>: necesita el plan de pruebas en ci.</li>
+      <li style="font-size:12.5px;color:var(--suave);line-height:1.5;padding:12px 8px 0">Sin los pasos 3 a 5 puedes analizar PRs a ${S.datos && S.datos.sin_dev ? "master" : "development y master"}, pero <b style="color:var(--warn)">no puedes entregar un PR a producción</b>: necesita el plan de pruebas en ci.</li>
     </ol>
     <section style="flex:999 1 420px;min-width:0;padding:28px;display:flex;flex-direction:column;gap:14px">
       <div style="display:flex;flex-direction:column;gap:4px"><span class="rot">Paso ${S.paso} de 5</span><h3 style="margin:0;font-size:20px;font-weight:600">${titulos[S.paso - 1]}</h3></div>
@@ -1410,7 +1412,7 @@ function vistaPorAprobar() {
     </div>`;
   };
   const pendientes = prs.filter((x) => !x.aprobado_por_mi), hechos = prs.filter((x) => x.aprobado_por_mi);
-  return `<div class="titulo-pag"><div style="flex-grow:1"><h1>Por aprobar</h1><p>PRs de otros en tus repos (${esc((pa.repos || []).join(", "))}) que puedes aprobar. Antes de aprobar mira si pasaron por el worker de su autor y, en master, si todo su código ya está en development. Aprobar es tu decisión: esto no bloquea, pero cada aprobación queda registrada con lo que el PR traía en ese momento. Si aprobaste development o master de una historia, también te toca el visto bueno del release.</p></div></div>
+  return `<div class="titulo-pag"><div style="flex-grow:1"><h1>Por aprobar</h1><p>PRs de otros en tus repos (${esc((pa.repos || []).join(", "))}) que puedes aprobar. Antes de aprobar mira si pasaron por el worker de su autor${S.datos.sin_dev ? "" : " y, en master, si todo su código ya está en development"}. Aprobar es tu decisión: esto no bloquea, pero cada aprobación queda registrada con lo que el PR traía en ese momento. Si aprobaste ${S.datos.sin_dev ? "master" : "development o master"} de una historia, también te toca el visto bueno del release.</p></div></div>
     ${pendientes.length ? `<section class="grupo">${pendientes.map(fila).join("")}</section>` : `<p class="vacio">No hay PRs esperando tu aprobación.</p>`}
     ${hechos.length ? `<details class="grupo"><summary style="cursor:pointer;padding:12px 18px;color:var(--suave)">Ya los aprobaste · ${hechos.length}</summary>${hechos.map(fila).join("")}</details>` : ""}`;
 }

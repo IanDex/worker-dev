@@ -39,7 +39,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "v3-worker 4.0.3"
+VERSION = "v3-worker 4.0.4"
 AQUI = Path(__file__).resolve().parent
 
 
@@ -1945,7 +1945,8 @@ def datos_panel(partes: list | None = None) -> dict:
         salida.update({"agentes": {"corriendo": [], "tope": tope_agentes(), "en_espera": []}, "ocultos": {}, "sugerencias": [],
                        "locales": [], "planes": {}, "sesiones": []})
     if "mis" in res:
-        salida.update({"dev": mis.get("dev"), "analisis": mis.get("analisis") or [], "pedidos": mis.get("pedidos") or [], "rechazados": mis.get("rechazados") or []})
+        salida.update({"dev": mis.get("dev"), "analisis": mis.get("analisis") or [], "pedidos": mis.get("pedidos") or [], "rechazados": mis.get("rechazados") or [],
+                       "sin_dev": bool(mis.get("sin_dev"))})
     if "detectados" in res:
         salida["detectados"] = det.get("detectados") or []
     if "historias" in res:
