@@ -9,6 +9,8 @@ Cuando quedas conforme, lo entregas. Hodor solo toma lo que tú entregas: un com
 - Python 3.9 o más nuevo.
 - El CLI `claude` instalado y con tu sesión iniciada (corre `claude` una vez y entra con tu cuenta).
 - Tu token personal de la revisión v3, que te llega por DM. Es personal: no lo compartas ni lo subas a ningún repo.
+- El repo de cada PR que analices clonado en tu carpeta de microservicios (la que configuras en el panel). Desde la
+  4.1 el worker arma ahí el contexto del análisis con tu git: Hodor solo le pasa la instrucción, las reglas y la huella del diff.
 
 ## Instalar
 

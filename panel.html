@@ -463,23 +463,27 @@ function pasosAnalisis(an, pedidoEn) {
   const ultimo = lista[lista.length - 1];
   const armadoListo = !!(prog || (an && (an.estado === "v3" || arm.fin)));
   const fase = prog ? prog.fase : "";
-  const orden = ["bajando", "preparando", "analizando", "enviando", "listo"];
-  const iWorker = orden.indexOf(fase);
+  const orden = ["bajando", "armando", "preparando", "analizando", "enviando", "listo"];
   const mal = fase === "error";
+  const iWorker = orden.indexOf(mal ? prog.fase_previa : fase);
   const pasos = [];
   pasos.push({ t: "Pedido recibido", donde: "Hodor", estado: "hecho" });
   const armDet = !an ? "Revisa las puertas del PR" : armadoListo ? (lista.length ? `${lista.length} pasos en ${segs(lista.reduce((a, x) => a + (Number(x.s) || 0), 0))}` : "")
     : ultimo ? `${ultimo.t} · <span data-reloj="${esc(ultimo.en)}">${reloj(ultimo.en)}</span>` : "En la cola, esperando turno";
-  pasos.push({ t: "Hodor arma el paquete", donde: "servidor de Hodor", estado: armadoListo ? "hecho" : "ahora", det: armDet, desde: !armadoListo && an ? (an.creado_en || pedidoEn) : 0 });
-  const baja = !armadoListo ? "luego" : mal && iWorker < 0 ? "mal" : iWorker > 1 ? "hecho" : "ahora";
-  pasos.push({ t: "Tu worker lo baja", donde: "tu máquina", estado: baja, det: baja === "ahora" && !prog ? "El paquete está listo; tu worker lo toma en segundos" : "" });
+  pasos.push({ t: "Hodor prepara el pedido y las reglas", donde: "servidor de Hodor", estado: armadoListo ? "hecho" : "ahora", det: armDet, desde: !armadoListo && an ? (an.creado_en || pedidoEn) : 0 });
+  const iAnaliza = orden.indexOf("analizando");
+  const baja = !armadoListo ? "luego" : mal && iWorker < iAnaliza ? "mal" : iWorker >= iAnaliza ? "hecho" : "ahora";
+  const accArmado = baja === "ahora" && prog ? (prog.eventos || []).slice(-5) : [];
+  pasos.push({ t: "Tu worker arma el contexto", donde: "tu máquina", estado: baja,
+    det: baja === "ahora" && !prog ? "El pedido está listo; tu worker lo toma en segundos" : baja === "ahora" ? "Trae el PR con tu git, revisa la huella y busca dónde se usa lo que cambia" : baja === "mal" ? esc(prog.error || "falló") : "",
+    acciones: accArmado, desde: baja === "ahora" && prog ? prog.desde : 0 });
   let anaEstado = "luego", anaDet = "", acciones = [];
   if (prog && (fase === "analizando" || fase === "enviando")) {
     anaEstado = fase === "enviando" ? "hecho" : "ahora";
     anaDet = `${esc(prog.proveedor || "claude")}${prog.modelo ? ` · ${esc(prog.modelo)}` : ""} · paso ${Number(prog.pasos || 0)} de ${Number(prog.max || 0)}`;
     acciones = (prog.eventos || []).slice(-5);
   } else if (prog && fase === "listo") anaEstado = "hecho";
-  else if (mal) { anaEstado = "mal"; anaDet = esc(prog.error || "falló"); }
+  else if (mal && iWorker >= iAnaliza) { anaEstado = "mal"; anaDet = esc(prog.error || "falló"); }
   pasos.push({ t: "Claude analiza", donde: "tu máquina", estado: anaEstado, det: anaDet, acciones, desde: anaEstado === "ahora" ? prog.desde : 0 });
   const listo = an && an.estado === "v3_analizado";
   pasos.push({ t: listo ? "Listo: ábrelo para ver los hallazgos" : "Resultado en tu panel", donde: "", estado: listo || fase === "listo" ? "hecho" : fase === "enviando" ? "ahora" : "luego",

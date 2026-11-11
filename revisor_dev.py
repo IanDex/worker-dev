@@ -39,7 +39,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "v3-worker 4.0.5"
+VERSION = "v3-worker 4.1.0"
 AQUI = Path(__file__).resolve().parent
 
 
@@ -133,7 +133,7 @@ def _api(metodo: str, ruta: str, cuerpo: dict | None = None, como: bool = False)
         raise
 
 
-ARCHIVOS_KIT = ("revisor_dev.py", "pruebas_dev.py", "panel.html", "fusionar_config.py")
+ARCHIVOS_KIT = ("revisor_dev.py", "pruebas_dev.py", "panel.html", "fusionar_config.py", "vecindario.py")
 
 
 def huella_kit() -> dict:
@@ -199,7 +199,7 @@ def _progreso(p: dict, fase: str = "", **extra) -> None:
         d.clear()
         d.update(fila=p.get("id"), eventos=[])
     if fase and d.get("fase") != fase:
-        d.update(fase=fase, desde=time.time())
+        d.update(fase_previa=d.get("fase") or "", fase=fase, desde=time.time())
     d.update(extra)
     d["en"] = time.time()
 
@@ -230,6 +230,127 @@ def _describir(parte: dict) -> str:
     return nombre
 
 
+MAX_BYTES_ARCHIVO = 2_000_000
+MAPEO_RE = re.compile(r"^[+-].*@(Get|Post|Put|Delete|Patch|Request)Mapping", re.M)
+
+
+def _git_en(carpeta: Path, *args: str, espera: int = 300) -> subprocess.CompletedProcess:
+    entorno = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"}
+    return subprocess.run(["git", "-C", str(carpeta), *args], capture_output=True, timeout=espera, env=entorno, creationflags=SIN_VENTANA)
+
+
+def huella_local(entradas: list) -> dict:
+    lineas, rutas = set(), set()
+    for d in entradas:
+        antes_ruta = d.get("ruta_antes") or d["ruta"]
+        if d.get("antes") and d.get("antes") == d.get("despues") and antes_ruta == d["ruta"]:
+            continue
+        if d.get("antes"):
+            lineas.add(f"-{antes_ruta}:{d['antes']}")
+            rutas.add(antes_ruta)
+        if d.get("despues"):
+            lineas.add(f"+{d['ruta']}:{d['despues']}")
+            rutas.add(d["ruta"])
+    return {"sha": hashlib.sha256("\n".join(sorted(lineas)).encode()).hexdigest(), "archivos": len(rutas)}
+
+
+def _clon_del_repo(repo: str) -> Path:
+    base = pruebas_dev.carpeta_repos()
+    carpeta = base / repo
+    if not (carpeta / ".git").exists():
+        raise RuntimeError(f"no encuentro {repo} en tu carpeta de microservicios ({base}): clónalo ahí y vuelve a pedir el análisis")
+    return carpeta
+
+
+def _blob(clon: Path, sha: str) -> list:
+    if not sha:
+        return []
+    r = _git_en(clon, "cat-file", "blob", sha, espera=60)
+    datos = r.stdout if r.returncode == 0 else b""
+    if len(datos) > MAX_BYTES_ARCHIVO or b"\0" in datos[:2048]:
+        datos = b""
+    return datos.decode("utf-8", "replace").splitlines()
+
+
+def armar_local(p: dict, carpeta: Path) -> None:
+    """El contexto del PR armado en tu máquina con tu git: los archivos antes y después, el diff y dónde se usa lo que
+    cambia. Hodor ya dejó en el paquete la instrucción, las reglas y la huella del diff; si tu git da otra huella, no se
+    analiza."""
+    import difflib
+    enc = json.loads((carpeta / "ENCARGO.json").read_text(encoding="utf-8"))
+    repo, base, commit, destino = enc["repo"], enc["base"], enc["commit"], enc.get("destino") or "master"
+    raiz = carpeta / enc["carpeta"]
+    clon = _clon_del_repo(repo)
+    _progreso(p, "armando")
+    _accion(p, f"Trae {enc.get('rama') or 'la rama'} y {destino} de CodeCommit")
+    r = _git_en(clon, "fetch", "-q", "origin", f"+refs/heads/{destino}:refs/hodor/destino", espera=600)
+    if r.returncode != 0:
+        raise RuntimeError(f"git fetch de {destino} en {repo} falló: {(r.stderr or b'').decode('utf-8', 'replace').strip()[:200]}")
+    if _git_en(clon, "cat-file", "-e", f"{commit}^{{commit}}", espera=30).returncode != 0 and enc.get("rama"):
+        _git_en(clon, "fetch", "-q", "origin", f"+refs/heads/{enc['rama']}:refs/hodor/fuente", espera=600)
+    for sha in (base, commit):
+        if _git_en(clon, "cat-file", "-e", f"{sha}^{{commit}}", espera=30).returncode != 0:
+            raise RuntimeError(f"tu clon de {repo} no tiene el commit {sha[:12]}: el PR cambió o la rama no está en origin")
+    _accion(p, "Calcula la huella del diff")
+    r = _git_en(clon, "diff", "--raw", "--no-renames", "-z", "--abbrev=40", "--no-ext-diff", base, commit, espera=120)
+    if r.returncode != 0:
+        raise RuntimeError(f"git diff en {repo} falló: {(r.stderr or b'').decode('utf-8', 'replace').strip()[:200]}")
+    partes = r.stdout.decode("utf-8", "replace").split("\0")
+    entradas, i = [], 0
+    while i < len(partes) - 1:
+        cab = partes[i]
+        if not cab.startswith(":"):
+            i += 1
+            continue
+        campos = cab[1:].split()
+        ruta = partes[i + 1]
+        cero = "0" * 40
+        antes, despues = (campos[2] if campos[2] != cero else ""), (campos[3] if campos[3] != cero else "")
+        entradas.append({"ruta": ruta, "ruta_antes": ruta if antes else "", "antes": antes, "despues": despues})
+        i += 2
+    huella = huella_local(entradas)
+    if huella["sha"] != enc.get("diff_sha") or huella["archivos"] != enc.get("archivos"):
+        raise RuntimeError(f"la huella del diff en tu máquina ({huella['sha'][:10]}, {huella['archivos']} archivos) no coincide con la de "
+                           f"Hodor ({str(enc.get('diff_sha'))[:10]}, {enc.get('archivos')}): no analizo un código distinto al del PR")
+    _accion(p, f"Baja {len(entradas)} archivo{'s' if len(entradas) != 1 else ''} de tu clon")
+    parches = []
+    for d in sorted(entradas, key=lambda x: x["ruta"])[:80]:
+        antes, despues = _blob(clon, d["antes"]), _blob(clon, d["despues"])
+        for lado, lineas_ in (("before", antes), ("after", despues)):
+            if lineas_:
+                archivo = raiz / lado / d["ruta"]
+                archivo.parent.mkdir(parents=True, exist_ok=True)
+                archivo.write_text("\n".join(lineas_) + "\n", encoding="utf-8")
+        parches += difflib.unified_diff([x + "\n" for x in antes], [x + "\n" for x in despues], f"a/{d['ruta']}", f"b/{d['ruta']}", n=5)
+    raiz.mkdir(parents=True, exist_ok=True)
+    diff = "".join(parches)
+    (raiz / "diff.patch").write_text(diff, encoding="utf-8")
+    pr_json = raiz / "pr.json"
+    try:
+        datos = json.loads(pr_json.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        datos = {}
+    publicos = []
+    for bloque in re.split(r"(?m)^--- a/", diff):
+        cabeza = bloque.split("\n", 1)[0]
+        for linea in MAPEO_RE.findall(bloque) and re.findall(r"(?m)^[+-].*@(?:Get|Post|Put|Delete|Patch|Request)Mapping.*$", bloque):
+            if "iuse" not in cabeza.lower() and "iuse" not in linea.lower():
+                publicos.append(linea)
+    repos = {o.get("repo") for o in datos.get("otros_prs") or []}
+    aviso = "El PR agrega o quita endpoints y no veo un PR de ms-config-api-gateway para la ruta en el API Gateway."
+    if publicos and "ms-config-api-gateway" not in repos and not repo.startswith("ms-config") and aviso not in (datos.get("contexto_detectado") or []):
+        datos["contexto_detectado"] = [*(datos.get("contexto_detectado") or []), aviso]
+        pr_json.write_text(json.dumps(datos, ensure_ascii=False, indent=1), encoding="utf-8")
+    _accion(p, "Busca en tu clon dónde se usa lo que cambia")
+    try:
+        import vecindario
+        vecindario.espejo = lambda _repo, _rama: (clon, "refs/hodor/destino")
+        v = vecindario.armar(repo, destino, diff, raiz)
+        _accion(p, f"Contexto listo · {v.get('usados', 0)} símbolos" if v.get("ok") else f"Sin vecindario: {v.get('motivo', '')}"[:100])
+    except Exception as err:  # noqa: BLE001 — sin vecindario el análisis sigue, como en Hodor
+        log(f"#{p['pr']}: vecindario: {str(err)[:200]}")
+
+
 def bajar(p: dict) -> Path:
     enlace = _api("GET", f"/api/v3/paquete?id={p['id']}")
     if enlace.get("error"):
@@ -257,6 +378,8 @@ def revisar(p: dict) -> None:
     log(f"#{p['pr']} ({p['repo']}): bajando el paquete")
     _progreso(p, "bajando")
     carpeta = bajar(p)
+    if (carpeta / "ENCARGO.json").exists():
+        armar_local(p, carpeta)
     _progreso(p, "preparando")
     ai = preparar_ai_context(carpeta)
     log(f"#{p['pr']}: ai-context {ai[:7]}" if ai else f"#{p['pr']}: sin ai-context (el análisis sigue sin él)")
@@ -2308,7 +2431,16 @@ def servir_panel() -> bool:
     return True
 
 
+def _completar_kit() -> None:
+    repo = Path(str(CONFIG.get("repo_kit") or ""))
+    for nombre in ARCHIVOS_KIT:
+        if not (AQUI / nombre).exists() and (repo / nombre).exists():
+            shutil.copyfile(repo / nombre, AQUI / nombre)
+            log(f"copié {nombre} desde {repo}: faltaba en la carpeta del worker")
+
+
 def main() -> int:
+    _completar_kit()
     if "--estado" in sys.argv:
         print(json.dumps(_api("GET", "/api/v3/cola"), ensure_ascii=False, indent=1))
         return 0
