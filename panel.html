@@ -199,10 +199,11 @@ try { const t = localStorage.getItem("hodor-tema"); if (t === "claro" || t === "
   .aviso-pedido.t-bad { border-color: var(--bad); background: var(--bad-f); }
   .pasos-an { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; width: 100%; }
   .pasos-an li { display: grid; grid-template-columns: 22px 1fr auto; gap: 10px; align-items: start; }
-  .pasos-an .marca { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; margin-top: 1px; border: 1.5px solid var(--linea-3); color: var(--tenue); }
+  .pasos-an .marca { box-sizing: border-box; width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; margin-top: 1px; border: 1.5px solid var(--linea-3); color: var(--tenue); line-height: 0; }
+  .pasos-an .marca svg { width: 11px; height: 11px; display: block; }
   .pasos-an li.hecho .marca { border-color: var(--ok); background: var(--ok); color: var(--fondo); }
   .pasos-an li.ahora .marca { border-color: var(--acc); color: var(--acc); }
-  .pasos-an li.ahora .marca .giro { width: 10px; height: 10px; margin: 0; border-width: 1.5px; }
+  .pasos-an li.ahora .marca .giro { box-sizing: border-box; display: block; width: 10px; height: 10px; margin: 0; border-width: 1.5px; vertical-align: 0; }
   .pasos-an li.mal .marca { border-color: var(--bad); background: var(--bad); color: var(--fondo); }
   .pasos-an li.luego { opacity: .55; }
   .pasos-an .tit { font-weight: 500; }
@@ -716,7 +717,15 @@ function hayEnCurso() {
   return ((S.datos || {}).analisis || []).some((a) => (a.entregado ? ["pendiente", "espera", "corriendo", "v3_listo"] : ["pendiente", "v3", "corriendo"]).includes(a.estado)
     && ahora() - epoch(a.analizado_en || a.creado || a.en || 0) < 3 * 3600);
 }
-function avisoPedido() {
+function huDelPedido() {
+  const p = S.pedido;
+  if (!p) return "";
+  const an = ((S.datos || {}).analisis || []).find((a) => String(a.pr) === String(p.pr));
+  if (an && an.historia && !p.abierto) { S.abiertos.add(`mis:${an.historia}`); p.abierto = true; }
+  return (an && an.historia) || "";
+}
+
+function avisoPedido(enHistoria) {
   const p = S.pedido;
   if (!p) return "";
   const d = S.datos;
@@ -730,7 +739,7 @@ function avisoPedido() {
     const [t, cls] = estadoPr(an); estado = t;
     tono = { "c-acc": "acc", "c-ok": "ok", "c-bad": "bad", "c-warn": "warn", "c-nar": "warn" }[cls] || "acc";
     fin = !corriendo;
-    sub = corriendo ? (an.historia ? `También lo ves abajo, en ${an.historia}.` : "") : "El análisis terminó: ábrelo para ver los hallazgos.";
+    sub = corriendo ? (an.historia && !enHistoria ? `También lo ves abajo, en ${an.historia}.` : "") : "El análisis terminó: ábrelo para ver los hallazgos.";
   }
   if (an && an.historia && !p.abierto) { S.abiertos.add(`mis:${an.historia}`); p.abierto = true; }
   return `<div class="aviso-pedido t-${tono}" role="status">
@@ -761,7 +770,7 @@ function vistaMis() {
   const esperan = teEsperan(historias);
   return `<div class="titulo-pag"><div style="flex-grow:1"><h1>Mis PRs</h1><p>${c.pendientes || 0} historia${c.pendientes === 1 ? "" : "s"} pendiente${c.pendientes === 1 ? "" : "s"}${esperan ? ` · ${esperan} PR${esperan === 1 ? "" : "s"} por analizar, entregar o corregir` : ""} · tus PRs de los últimos 60 días, ${S.datos.sin_dev ? "de master a release" : "de development a master y a release"}</p></div>
       <button class="btn" data-tab="analizar">+ Analizar otro PR</button></div>
-    ${avisoPedido()}${tope}${pedidos}
+    ${S.filtroHu !== "rechazados" && huDelPedido() && visibles.some((g) => g.hu === huDelPedido()) ? "" : avisoPedido()}${tope}${pedidos}
     <div class="barra barra-mis">
       <label for="busca-mis" class="sr">Buscar historia, repo o PR</label>
       <input id="busca-mis" class="busca busca-grande" data-busca data-foco="busca" placeholder="Buscar historia, repo o PR" value="${esc(S.busca)}">
@@ -980,7 +989,7 @@ function grupo(g) {
         ${casoAbierto(g.hu) ? `<span class="menu-nota">Caso ${esc(casoAbierto(g.hu).codigo)} abierto · ${esc(hace(casoAbierto(g.hu).en))}</span>` : ""}
       </div>` : ""}
     </div>
-    ${abierto ? `<div class="grupo-cuerpo">${sig ? `<div class="siguiente"><span class="rot">Siguiente</span><span>${sig}</span></div>` : ""}${caminos.map((c) => c.html).join("")}</div>` : ""}
+    ${abierto ? `<div class="grupo-cuerpo">${huDelPedido() === g.hu ? avisoPedido(true) : ""}${sig ? `<div class="siguiente"><span class="rot">Siguiente</span><span>${sig}</span></div>` : ""}${caminos.map((c) => c.html).join("")}</div>` : ""}
   </section>`;
 }
 
