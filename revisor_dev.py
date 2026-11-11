@@ -39,7 +39,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "v3-worker 4.0.2"
+VERSION = "v3-worker 4.0.3"
 AQUI = Path(__file__).resolve().parent
 
 
