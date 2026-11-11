@@ -39,7 +39,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "v3-worker 4.0.0"
+VERSION = "v3-worker 4.0.1"
 AQUI = Path(__file__).resolve().parent
 
 
@@ -1175,7 +1175,7 @@ def reportar_falla(contexto: str, err, siempre: bool = False) -> None:
 def _git(*args: str, espera: int = 120) -> subprocess.CompletedProcess:
     repo = str(CONFIG.get("repo_kit") or "")
     return subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True, timeout=espera,
-                          env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+                          env={**os.environ, "GIT_TERMINAL_PROMPT": "0"}, creationflags=SIN_VENTANA)
 
 
 def actualizar(a_mano: bool = False) -> dict:
@@ -1587,7 +1587,18 @@ def traer_compartidos() -> dict:
     return r
 
 
+_REPOS_CACHE: dict = {"en": 0.0, "clave": "", "valor": None}
+
+
 def estado_repos() -> dict:
+    clave = str(CONFIG.get("repos") or "")
+    if _REPOS_CACHE["valor"] is not None and _REPOS_CACHE["clave"] == clave and time.time() - _REPOS_CACHE["en"] < 300:
+        return _REPOS_CACHE["valor"]
+    _REPOS_CACHE.update(en=time.time(), clave=clave, valor=_estado_repos())
+    return _REPOS_CACHE["valor"]
+
+
+def _estado_repos() -> dict:
     if not CONFIG.get("repos"):
         return {"ok": False, "error": "", "config_properties": False, "ai_context": False}
     base = Path(str(CONFIG["repos"])).expanduser()
@@ -1818,7 +1829,7 @@ def _worktree(repo_dir: Path, repo: str, pr: str, rama: str) -> Path:
     """Una carpeta aparte (git worktree) con la rama del PR, para no cambiarle la rama ni tocar los cambios del repo donde
     estás trabajando. Si esa rama ya es la que tienes abierta en tu repo, se usa tu repo tal cual."""
     def git(*a: str, espera: int = 120) -> subprocess.CompletedProcess:
-        return subprocess.run(["git", "-C", str(repo_dir), *a], capture_output=True, text=True, timeout=espera)
+        return subprocess.run(["git", "-C", str(repo_dir), *a], capture_output=True, text=True, timeout=espera, creationflags=SIN_VENTANA)
     actual = git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
     if rama and actual == rama:
         return repo_dir

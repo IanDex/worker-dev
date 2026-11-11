@@ -30,6 +30,7 @@ import uuid
 from pathlib import Path
 
 AQUI = Path(__file__).resolve().parent
+SIN_VENTANA = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 TRABAJO = Path(os.environ.get("HODOR_V3_TRABAJO") or (Path.home() / ".hodor-v3")).expanduser()
 DB = TRABAJO / "hodor.db"
 AMBIENTE = "ci"
@@ -103,12 +104,12 @@ def guardar_secreto(clave: str, valor: str) -> None:
     hay llavero; si no, la base local con permisos solo para tu usuario."""
     if sys.platform == "darwin":
         subprocess.run(["security", "add-generic-password", "-U", "-s", SERVICIO, "-a", clave, "-w", valor],
-                       check=True, capture_output=True, timeout=20)
+                       check=True, capture_output=True, timeout=20, creationflags=SIN_VENTANA)
         guardado = "keychain"
     elif sys.platform.startswith("win"):
         guardado = "dpapi:" + base64.b64encode(_dpapi(valor.encode("utf-8"), True)).decode()
     elif shutil.which("secret-tool") and subprocess.run(["secret-tool", "store", "--label", f"{SERVICIO} {clave}", "servicio", SERVICIO, "clave", clave],
-                                                        input=valor, text=True, capture_output=True, timeout=20).returncode == 0:
+                                                        input=valor, text=True, capture_output=True, timeout=20, creationflags=SIN_VENTANA).returncode == 0:
         guardado = "secret-tool"
     else:
         guardado = "plano:" + valor
@@ -127,12 +128,12 @@ def leer_secreto(clave: str) -> str:
         return ""
     valor = fila["valor"] or ""
     if valor == "keychain":
-        r = subprocess.run(["security", "find-generic-password", "-s", SERVICIO, "-a", clave, "-w"], capture_output=True, text=True, timeout=20)
+        r = subprocess.run(["security", "find-generic-password", "-s", SERVICIO, "-a", clave, "-w"], capture_output=True, text=True, timeout=20, creationflags=SIN_VENTANA)
         return r.stdout.rstrip("\n") if r.returncode == 0 else ""
     if valor.startswith("dpapi:"):
         return _dpapi(base64.b64decode(valor[6:]), False).decode("utf-8")
     if valor == "secret-tool":
-        r = subprocess.run(["secret-tool", "lookup", "servicio", SERVICIO, "clave", clave], capture_output=True, text=True, timeout=20)
+        r = subprocess.run(["secret-tool", "lookup", "servicio", SERVICIO, "clave", clave], capture_output=True, text=True, timeout=20, creationflags=SIN_VENTANA)
         return r.stdout.rstrip("\n") if r.returncode == 0 else ""
     return valor[6:] if valor.startswith("plano:") else ""
 
@@ -144,9 +145,9 @@ def hay_secreto(clave: str) -> bool:
 
 def borrar_secreto(clave: str) -> None:
     if sys.platform == "darwin":
-        subprocess.run(["security", "delete-generic-password", "-s", SERVICIO, "-a", clave], capture_output=True, timeout=20)
+        subprocess.run(["security", "delete-generic-password", "-s", SERVICIO, "-a", clave], capture_output=True, timeout=20, creationflags=SIN_VENTANA)
     elif shutil.which("secret-tool"):
-        subprocess.run(["secret-tool", "clear", "servicio", SERVICIO, "clave", clave], capture_output=True, timeout=20)
+        subprocess.run(["secret-tool", "clear", "servicio", SERVICIO, "clave", clave], capture_output=True, timeout=20, creationflags=SIN_VENTANA)
     with _CANDADO, _db() as con:
         con.execute("DELETE FROM secretos WHERE clave = ?", (clave,))
 
@@ -305,7 +306,7 @@ def config_properties(base: Path | None = None) -> tuple:
     if not (carpeta / ".git").exists():
         return None, "Falta ms-config-properties en tu carpeta de microservicios: clónalo ahí"
     try:
-        r = subprocess.run(["git", "-C", str(carpeta), "remote", "get-url", "origin"], capture_output=True, text=True, timeout=20)
+        r = subprocess.run(["git", "-C", str(carpeta), "remote", "get-url", "origin"], capture_output=True, text=True, timeout=20, creationflags=SIN_VENTANA)
     except (OSError, subprocess.SubprocessError):
         return None, "no pude correr git en ms-config-properties"
     if r.returncode != 0 or not r.stdout.strip():
@@ -319,7 +320,7 @@ def ai_context(base: Path | None = None) -> tuple:
     if not (carpeta / ".git").exists():
         return None, f"Falta ai-context en tu carpeta de microservicios: clónalo ahí ({CLONAR_AI_CONTEXT})"
     try:
-        r = subprocess.run(["git", "-C", str(carpeta), "remote", "get-url", "origin"], capture_output=True, text=True, timeout=20)
+        r = subprocess.run(["git", "-C", str(carpeta), "remote", "get-url", "origin"], capture_output=True, text=True, timeout=20, creationflags=SIN_VENTANA)
     except (OSError, subprocess.SubprocessError):
         return None, "no pude correr git en ai-context"
     if r.returncode != 0 or not r.stdout.strip():
@@ -370,11 +371,11 @@ def leer_bo_config(base: Path | None = None, traer: bool = False) -> tuple:
     marca = carpeta / ".git" / "FETCH_HEAD"
     if traer or not marca.exists() or time.time() - marca.stat().st_mtime > CADA_BO:
         try:
-            subprocess.run(["git", "-C", str(carpeta), "fetch", "--quiet", "origin", "master"], capture_output=True, timeout=60)
+            subprocess.run(["git", "-C", str(carpeta), "fetch", "--quiet", "origin", "master"], capture_output=True, timeout=60, creationflags=SIN_VENTANA)
         except (OSError, subprocess.SubprocessError):
             pass
     try:
-        r = subprocess.run(["git", "-C", str(carpeta), "show", f"origin/master:{ARCHIVO_BO}"], capture_output=True, text=True, timeout=30)
+        r = subprocess.run(["git", "-C", str(carpeta), "show", f"origin/master:{ARCHIVO_BO}"], capture_output=True, text=True, timeout=30, creationflags=SIN_VENTANA)
     except (OSError, subprocess.SubprocessError):
         return {}, "no pude leer ms-config-properties con git"
     if r.returncode != 0 or not r.stdout.strip():
@@ -800,9 +801,9 @@ def cli_git(repo: str, *args: str) -> None:
     marca = TRABAJO / f"fetch-{repo}.marca"
     if not marca.exists() or time.time() - marca.stat().st_mtime > 600:
         subprocess.run(["git", "-C", str(carpeta), "fetch", "--quiet", "origin", "master", "development", "release"],
-                       capture_output=True, timeout=120)
+                       capture_output=True, timeout=120, creationflags=SIN_VENTANA)
         marca.touch()
-    r = subprocess.run(["git", "-C", str(carpeta), *args], capture_output=True, text=True, timeout=60)
+    r = subprocess.run(["git", "-C", str(carpeta), *args], capture_output=True, text=True, timeout=60, creationflags=SIN_VENTANA)
     print((r.stdout or r.stderr)[:40000])
 
 

@@ -60,6 +60,7 @@ try { const t = localStorage.getItem("hodor-tema"); if (t === "claro" || t === "
   .c-off { color: var(--suave); background: var(--hondo); border-color: var(--linea); }
   .punto { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
   input, textarea, select { background: var(--hondo); color: var(--texto); border: 1px solid var(--linea); border-radius: 8px; padding: 8px 11px; font: inherit; }
+  select { appearance: none; -webkit-appearance: none; padding-right: 36px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%239397ab' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 14px center; background-size: 10px 6px; cursor: pointer; }
   input:focus-visible, textarea:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible, summary:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
 
   .app { display: flex; min-height: 100vh; }
