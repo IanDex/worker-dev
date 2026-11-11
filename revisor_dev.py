@@ -39,7 +39,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "v3-worker 4.0.4"
+VERSION = "v3-worker 4.0.5"
 AQUI = Path(__file__).resolve().parent
 
 
@@ -190,6 +190,46 @@ def _bajar_reglas(sha: str, carpeta: Path) -> None:
             shutil.rmtree(vieja, ignore_errors=True)
 
 
+PROGRESO: dict = {}
+
+
+def _progreso(p: dict, fase: str = "", **extra) -> None:
+    d = PROGRESO.setdefault(str(p.get("pr")), {"fila": p.get("id"), "eventos": []})
+    if d.get("fila") != p.get("id"):
+        d.clear()
+        d.update(fila=p.get("id"), eventos=[])
+    if fase and d.get("fase") != fase:
+        d.update(fase=fase, desde=time.time())
+    d.update(extra)
+    d["en"] = time.time()
+
+
+def _accion(p: dict, texto: str) -> None:
+    d = PROGRESO.get(str(p.get("pr")))
+    if d is not None and texto:
+        d["eventos"] = (d.get("eventos") or [])[-5:] + [{"t": texto[:120], "en": time.time()}]
+        d["en"] = time.time()
+
+
+def _describir(parte: dict) -> str:
+    nombre, e = str(parte.get("name") or ""), parte.get("input") or {}
+    if not isinstance(e, dict):
+        e = {}
+    if nombre == "Read":
+        return f"Lee {Path(str(e.get('file_path') or '')).name}"
+    if nombre == "Grep":
+        return f"Busca «{str(e.get('pattern') or '')[:50]}»"
+    if nombre == "Glob":
+        return f"Busca archivos {str(e.get('pattern') or '')[:50]}"
+    if nombre == "Bash":
+        return "Corre " + " ".join(str(e.get("command") or "").split())[:60]
+    if nombre == "TodoWrite":
+        return "Ordena su plan de revisión"
+    if nombre.startswith("mcp__"):
+        return "Consulta " + nombre.split("__")[1]
+    return nombre
+
+
 def bajar(p: dict) -> Path:
     enlace = _api("GET", f"/api/v3/paquete?id={p['id']}")
     if enlace.get("error"):
@@ -215,15 +255,19 @@ def bajar(p: dict) -> Path:
 
 def revisar(p: dict) -> None:
     log(f"#{p['pr']} ({p['repo']}): bajando el paquete")
+    _progreso(p, "bajando")
     carpeta = bajar(p)
+    _progreso(p, "preparando")
     ai = preparar_ai_context(carpeta)
     log(f"#{p['pr']}: ai-context {ai[:7]}" if ai else f"#{p['pr']}: sin ai-context (el análisis sigue sin él)")
     pedido = (carpeta / "PEDIDO.txt").read_text(encoding="utf-8")
     propia = p.get("politica") if isinstance(p.get("politica"), dict) else None
     proveedor, modelo = motor_para(p, None if propia and propia.get("modo") == "fijo" else politica_hodor(), elegidos())
     log(f"#{p['pr']}: analiza {proveedor} · {modelo or 'por defecto'}")
+    _progreso(p, "analizando", proveedor=proveedor, modelo=modelo or "", pasos=0, max=int(p.get("max_pasos") or 60))
     inicio = time.time()
     r = MOTORES[proveedor](p, carpeta, pedido, modelo, inicio)
+    _progreso(p, "enviando")
     final, sesion, turnos, costo = r["final"], r["sesion"], r["turnos"], r["costo"]
     sello = {"fila": p["id"], "pr": str(p["pr"]), "paquete_sha": p["paquete_sha"], "reglas_sha": p.get("reglas_sha") or "",
              "desafio": p["desafio"], "sesion": sesion,
@@ -322,6 +366,8 @@ def _motor_claude(p: dict, carpeta: Path, pedido: str, modelo: str, inicio: floa
             for parte in contenido if isinstance(contenido, list) else []:
                 if isinstance(parte, dict) and parte.get("type") == "tool_use":
                     pasos += 1
+                    _progreso(p, pasos=pasos)
+                    _accion(p, _describir(parte))
                     if pasos > int(p.get("max_pasos") or 60):
                         proc.kill()
                         raise RuntimeError("la revisión pasó del tope de pasos")
@@ -369,6 +415,7 @@ def _motor_codex(p: dict, carpeta: Path, pedido: str, modelo: str, inicio: float
             ultimo = str(item.get("text") or ultimo)
         elif tipo == "item.started" and item.get("type") in ("command_execution", "file_change", "mcp_tool_call", "web_search"):
             pasos += 1
+            _progreso(p, pasos=pasos)
             if pasos > int(p.get("max_pasos") or 60):
                 proc.kill()
                 raise RuntimeError("la revisión pasó del tope de pasos")
@@ -1082,12 +1129,14 @@ def _correr(p: dict, previos: int) -> None:
     _salida().clear()
     try:
         revisar(p)
+        _progreso(p, "listo")
         with _DB_CANDADO, _db() as con:
             con.execute("DELETE FROM fallos WHERE fila = ?", (fila,))
     except Exception as err:  # noqa: BLE001 — se reintenta en la próxima vuelta, hasta el tope
         donde = traceback.extract_tb(err.__traceback__)[-1] if err.__traceback__ else None
         detalle = f"{err} (en {Path(donde.filename).name}:{donde.lineno})" if donde else str(err)
         n = previos + 1
+        _progreso(p, "error", error=str(err)[:200])
         with _DB_CANDADO, _db() as con:
             con.execute("INSERT OR REPLACE INTO fallos(fila, pr, sha, n, error, en) VALUES(?,?,?,?,?,?)",
                         (fila, str(p.get("pr")), p.get("paquete_sha") or "", n, detalle[:1000], time.time()))
@@ -1941,7 +1990,10 @@ def datos_panel(partes: list | None = None) -> dict:
     salida = {"agentes": {"corriendo": sorted(_CORRIENDO.values()), "tope": tope_agentes(), "en_espera": list(_EN_ESPERA)},
               "ocultos": ocultos, "historias": historias, "sugerencias": sugerencias,
               "locales": locales, "planes": planes, "sesiones": sesiones, "estado": estado_panel()}
+    salida["progreso"] = {k: dict(v) for k, v in list(PROGRESO.items())
+                          if v.get("fase") not in ("listo", "error") or time.time() - float(v.get("en") or 0) < 600}
     if VER_COMO["correo"]:
+        salida["progreso"] = {}
         salida.update({"agentes": {"corriendo": [], "tope": tope_agentes(), "en_espera": []}, "ocultos": {}, "sugerencias": [],
                        "locales": [], "planes": {}, "sesiones": []})
     if "mis" in res:

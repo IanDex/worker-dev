@@ -197,6 +197,20 @@ try { const t = localStorage.getItem("hodor-tema"); if (t === "claro" || t === "
   .aviso { padding: 10px 14px; border-radius: 10px; font-size: 13.5px; }
   .aviso-pedido { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 12px 16px; border-radius: 10px; border: 1px solid var(--acc); background: var(--acc-f); }
   .aviso-pedido.t-bad { border-color: var(--bad); background: var(--bad-f); }
+  .pasos-an { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; width: 100%; }
+  .pasos-an li { display: grid; grid-template-columns: 22px 1fr auto; gap: 10px; align-items: start; }
+  .pasos-an .marca { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; margin-top: 1px; border: 1.5px solid var(--linea-3); color: var(--tenue); }
+  .pasos-an li.hecho .marca { border-color: var(--ok); background: var(--ok); color: var(--fondo); }
+  .pasos-an li.ahora .marca { border-color: var(--acc); color: var(--acc); }
+  .pasos-an li.ahora .marca .giro { width: 10px; height: 10px; margin: 0; border-width: 1.5px; }
+  .pasos-an li.mal .marca { border-color: var(--bad); background: var(--bad); color: var(--fondo); }
+  .pasos-an li.luego { opacity: .55; }
+  .pasos-an .tit { font-weight: 500; }
+  .pasos-an .donde { font-size: 11px; color: var(--tenue); border: 1px solid var(--linea-3); border-radius: 999px; padding: 1px 8px; margin-left: 8px; white-space: nowrap; }
+  .pasos-an .det { display: block; font-size: 12.5px; color: var(--suave); margin-top: 3px; }
+  .pasos-an .acciones { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; font-size: 12px; color: var(--tenue); }
+  .pasos-an .acciones span:last-child { color: var(--acc-t); }
+  .pasos-an .tiempo { font-size: 12px; color: var(--tenue); }
   .aviso-pedido.t-ok { border-color: var(--ok); background: var(--ok-f); }
   .aviso-pedido.t-warn { border-color: var(--warn); background: var(--warn-f); }
   .det { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 14px 16px; border-top: 1px solid var(--linea-2); }
@@ -435,9 +449,58 @@ function chipHu(h) {
   return `<span class="chip ${cls}">${esc(h.estado)}${h.estado_desde ? ` · <span class="mono">${dura(h.estado_desde)}</span>` : ""}</span>`;
 }
 
+function progresoDe(an) {
+  const p = ((S.datos || {}).progreso || {})[String(an && an.pr)];
+  return p && an && String(p.fila) === String(an.id) ? p : null;
+}
+
+function segs(s) { s = Math.max(0, Math.round(Number(s) || 0)); return s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${String(s % 60).padStart(2, "0")} s`; }
+
+function pasosAnalisis(an, pedidoEn) {
+  const prog = progresoDe(an);
+  const arm = (an && an.armado) || {};
+  const lista = arm.pasos || [];
+  const ultimo = lista[lista.length - 1];
+  const armadoListo = !!(prog || (an && (an.estado === "v3" || arm.fin)));
+  const fase = prog ? prog.fase : "";
+  const orden = ["bajando", "preparando", "analizando", "enviando", "listo"];
+  const iWorker = orden.indexOf(fase);
+  const mal = fase === "error";
+  const pasos = [];
+  pasos.push({ t: "Pedido recibido", donde: "Hodor", estado: "hecho" });
+  const armDet = !an ? "Revisa las puertas del PR" : armadoListo ? (lista.length ? `${lista.length} pasos en ${segs(lista.reduce((a, x) => a + (Number(x.s) || 0), 0))}` : "")
+    : ultimo ? `${ultimo.t} · <span data-reloj="${esc(ultimo.en)}">${reloj(ultimo.en)}</span>` : "En la cola, esperando turno";
+  pasos.push({ t: "Hodor arma el paquete", donde: "servidor de Hodor", estado: armadoListo ? "hecho" : "ahora", det: armDet, desde: !armadoListo && an ? (an.creado_en || pedidoEn) : 0 });
+  const baja = !armadoListo ? "luego" : mal && iWorker < 0 ? "mal" : iWorker > 1 ? "hecho" : "ahora";
+  pasos.push({ t: "Tu worker lo baja", donde: "tu máquina", estado: baja, det: baja === "ahora" && !prog ? "El paquete está listo; tu worker lo toma en segundos" : "" });
+  let anaEstado = "luego", anaDet = "", acciones = [];
+  if (prog && (fase === "analizando" || fase === "enviando")) {
+    anaEstado = fase === "enviando" ? "hecho" : "ahora";
+    anaDet = `${esc(prog.proveedor || "claude")}${prog.modelo ? ` · ${esc(prog.modelo)}` : ""} · paso ${Number(prog.pasos || 0)} de ${Number(prog.max || 0)}`;
+    acciones = (prog.eventos || []).slice(-5);
+  } else if (prog && fase === "listo") anaEstado = "hecho";
+  else if (mal) { anaEstado = "mal"; anaDet = esc(prog.error || "falló"); }
+  pasos.push({ t: "Claude analiza", donde: "tu máquina", estado: anaEstado, det: anaDet, acciones, desde: anaEstado === "ahora" ? prog.desde : 0 });
+  const listo = an && an.estado === "v3_analizado";
+  pasos.push({ t: listo ? "Listo: ábrelo para ver los hallazgos" : "Resultado en tu panel", donde: "", estado: listo || fase === "listo" ? "hecho" : fase === "enviando" ? "ahora" : "luego",
+    det: listo && datosDe(an) ? `Puntaje ${esc(datosDe(an).puntaje)}` : fase === "enviando" ? "Enviando el resultado a Hodor" : "" });
+  return `<ol class="pasos-an">${pasos.map((x) => `<li class="${x.estado}">
+      <span class="marca" aria-hidden="true">${x.estado === "hecho" ? I_OK : x.estado === "ahora" ? `<span class="giro"></span>` : x.estado === "mal" ? "!" : ""}</span>
+      <span><span class="tit">${esc(x.t)}</span>${x.donde ? `<span class="donde">${esc(x.donde)}</span>` : ""}${x.det ? `<span class="det">${x.det}</span>` : ""}
+        ${x.acciones && x.acciones.length ? `<span class="acciones">${x.acciones.map((e) => `<span class="mono">${esc(e.t)}</span>`).join("")}</span>` : ""}</span>
+      <span class="tiempo mono">${x.desde ? `<span data-reloj="${esc(x.desde)}">${reloj(x.desde)}</span>` : ""}</span>
+    </li>`).join("")}</ol>`;
+}
+
 function estadoPr(x) {
   const d = datosDe(x);
   if (x.estado === "pendiente" && !x.entregado) return ["En cola", "c-acc"];
+  if ((x.estado === "corriendo" || x.estado === "v3") && !x.entregado) {
+    const pr = progresoDe(x);
+    if (pr && pr.fase === "analizando") return [`Claude analiza · paso ${Number(pr.pasos || 0)}`, "c-acc"];
+    if (pr) return ["En tu worker", "c-acc"];
+    return [x.estado === "v3" ? "Paquete listo · tu worker lo toma" : "Hodor arma el paquete", "c-acc"];
+  }
   if (x.estado === "corriendo" || x.estado === "v3") return ["Analizando en tu worker", "c-acc"];
   if (x.estado === "v3_analizado") return d && Number(d.criticas || 0) ? ["Analizado · tiene críticas", "c-bad"] : d && (d.puntaje < 85 || Number(d.medias || 0) > 2) ? ["Analizado · bajo el umbral", "c-warn"] : ["Analizado · listo para enviar", "c-ok"];
   if (x.entregado && ["pendiente", "espera", "corriendo"].includes(x.estado)) return ["Enviado · " + (x.motivo || "pasando las reglas"), "c-warn"];
@@ -657,13 +720,13 @@ function avisoPedido() {
   const an = (d.analisis || []).find((a) => String(a.pr) === String(p.pr));
   const corriendo = an && (["pendiente", "v3", "corriendo"].includes(an.estado) && !an.entregado);
   const fresco = an && (corriendo || epoch(an.analizado_en) >= p.en - 5);
-  let tono = "acc", estado = "Hodor lo está validando", sub = "Hodor revisa las puertas y arma el paquete; tu worker lo toma enseguida.", fin = false;
+  let tono = "acc", estado = "en curso", sub = "", fin = false;
   if (ped && ped.resultado) { tono = "bad"; estado = "rechazado"; sub = String(ped.resultado).replace(/^rechazado:\s*/, ""); fin = true; }
   else if (fresco) {
     const [t, cls] = estadoPr(an); estado = t;
     tono = { "c-acc": "acc", "c-ok": "ok", "c-bad": "bad", "c-warn": "warn", "c-nar": "warn" }[cls] || "acc";
     fin = !corriendo;
-    sub = corriendo ? `Tu worker lo está analizando.${an.historia ? ` Lo ves abajo, en ${an.historia}.` : ""}` : "El análisis terminó: ábrelo para ver los hallazgos.";
+    sub = corriendo ? (an.historia ? `También lo ves abajo, en ${an.historia}.` : "") : "El análisis terminó: ábrelo para ver los hallazgos.";
   }
   if (an && an.historia && !p.abierto) { S.abiertos.add(`mis:${an.historia}`); p.abierto = true; }
   return `<div class="aviso-pedido t-${tono}" role="status">
@@ -673,6 +736,7 @@ function avisoPedido() {
     <span class="mono" style="font-size:12px;color:var(--${tono})">${esc(estado)}${fin ? "" : ` · <span data-reloj="${esc(p.en)}">${reloj(p.en)}</span>`}</span>
     ${fin && an && !(ped && ped.resultado) ? `<button class="btn chico prim" data-abrir="${esc(an.id)}">Ver análisis</button>` : ""}
     <button class="icono" style="width:26px;height:26px" data-accion="cerrar-pedido" aria-label="Quitar este aviso">${I_CERRAR}</button>
+    ${!fin ? `<div style="flex:1 1 100%;padding:6px 0 2px 22px">${pasosAnalisis(fresco ? an : null, p.en)}</div>` : ""}
   </div>`;
 }
 
@@ -809,7 +873,7 @@ function nodo(p, anterior, rama) {
   if (p.aprobado_por) return n("ok", `Aprobado por ${p.aprobado_por === "Cristian" ? "el revisor" : "Hodor"}`, `${punt ? punt + " · " : ""}listo para mergear`, "");
   const ver = an ? `<button class="btn chico" data-abrir="${esc(an.id)}">Ver análisis</button>` : "";
   if (an) {
-    if (an.estado === "corriendo" || an.estado === "v3" || (an.estado === "pendiente" && !an.entregado)) return n("corre", "Analizando en tu worker", "", ver);
+    if (an.estado === "corriendo" || an.estado === "v3" || (an.estado === "pendiente" && !an.entregado)) return n("corre", estadoPr(an)[0], "", ver);
     if (an.estado === "superada") return n("tu", "Cambió el commit", "Analízalo de nuevo", `<button class="btn prim chico" data-pedir="${esc(p.url)}">Analizar</button>`);
     if (an.estado === "cancelada" && an.accion === "v3_fallo") return n("mal", "El análisis falló", an.motivo ? esc(an.motivo) : "Vuelve a pedirlo", `<button class="btn prim chico" data-pedir="${esc(p.url)}">Analizar de nuevo</button>`);
     if (an.estado === "v3_analizado") {
@@ -1251,7 +1315,7 @@ function cajon() {
   if (S.dtab === "hall") {
     panel = d.resumen
       ? `<section style="display:flex;flex-direction:column;gap:6px"><span class="rot">Resumen</span><p style="margin:0;line-height:1.6">${esc(d.resumen)}</p></section>${seccionHallazgos(x, d)}${seccionDebate(x, d)}`
-      : `<p style="color:var(--tenue);margin:0">${x.estado === "v3" || x.estado === "corriendo" ? "Tu worker lo está analizando…" : "Esperando el análisis…"}</p>`;
+      : (["v3", "corriendo", "pendiente"].includes(x.estado) && !x.entregado ? pasosAnalisis(x) : `<p style="color:var(--tenue);margin:0">Esperando el análisis…</p>`);
   } else if (S.dtab === "que") {
     panel = `${d.funcional ? `<div class="dos"><section class="caja"><span class="rot">Qué hace el cambio</span><p style="margin:0;line-height:1.6">${esc(d.funcional.que_hace)}</p></section>
       <section class="caja"><span class="rot">A qué afecta</span><ul style="margin:0;padding-left:18px;line-height:1.6">${(d.funcional.afecta || []).map((a) => `<li>${esc(a)}</li>`).join("")}</ul></section></div>` : ""}
