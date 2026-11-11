@@ -4,7 +4,7 @@ quedas conforme, lo entregas. Hodor solo toma lo que entregas.
 
 El análisis corre en tu máquina con tu Claude, con el mismo paquete y las mismas reglas del revisor central, y vuelve
 a Hodor con un sello firmado. No publica nada en Slack, Jira ni CodeCommit.
-Solo usa la librería estándar de Python (3.9+) y el CLI `claude` con tu sesión.
+Solo usa la librería estándar de Python (3.9+) y el CLI `claude` con tu sesión (o `codex` / `gemini` si el repo lo pide).
 
     python revisor_dev.py            # corre en bucle y sirve el panel en http://127.0.0.1:7788
     python revisor_dev.py --una      # analiza lo pendiente una vez y termina
@@ -22,6 +22,7 @@ import io
 import json
 import os
 import base64
+import re
 import secrets
 import shutil
 import sqlite3
@@ -38,7 +39,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "v3-worker 3.2.1"
+VERSION = "v3-worker 4.0.0"
 AQUI = Path(__file__).resolve().parent
 
 
@@ -103,19 +104,33 @@ def log(*partes) -> None:
         f.write(linea + "\n")
 
 
-def _api(metodo: str, ruta: str, cuerpo: dict | None = None) -> dict:
+_HODOR = {"respuesta": 0.0, "fallo": 0.0}
+VER_COMO = {"correo": "", "nombre": ""}
+LECTURA_COMO = ("/api/v3/mis", "/api/v3/detectados", "/api/v3/historias", "/api/v3/por-aprobar", "/api/v3/historial",
+                "/api/v3/ayuda", "/api/v3/analisis")
+
+
+def _api(metodo: str, ruta: str, cuerpo: dict | None = None, como: bool = False) -> dict:
     datos = json.dumps(cuerpo).encode("utf-8") if cuerpo is not None else None
-    req = urllib.request.Request(API + ruta, data=datos, method=metodo,
-                                 headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json",
-                                          "User-Agent": VERSION.replace("v3-worker", "v3-vista") if VISTA else VERSION})
+    cabeceras = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json",
+                 "User-Agent": VERSION.replace("v3-worker", "v3-vista") if VISTA else VERSION}
+    if como and VER_COMO["correo"] and metodo == "GET" and ruta.split("?", 1)[0] in LECTURA_COMO:
+        cabeceras["X-Ver-Como"] = VER_COMO["correo"]
+    req = urllib.request.Request(API + ruta, data=datos, method=metodo, headers=cabeceras)
     try:
         with urllib.request.urlopen(req, timeout=60) as r:
-            return json.loads(r.read() or b"{}")
+            crudo = r.read()
+        _HODOR["respuesta"] = time.time()
+        return json.loads(crudo or b"{}")
     except urllib.error.HTTPError as err:
+        _HODOR["respuesta"] = time.time()
         try:
             return {"error": json.loads(err.read()).get("error", str(err)), "status": err.code}
         except ValueError:
             return {"error": str(err), "status": err.code}
+    except (urllib.error.URLError, OSError):
+        _HODOR["fallo"] = time.time()
+        raise
 
 
 ARCHIVOS_KIT = ("revisor_dev.py", "pruebas_dev.py", "panel.html", "fusionar_config.py")
@@ -145,8 +160,13 @@ def reglas(sha: str) -> Path:
     """Las reglas del revisor (lineamientos, SISTEMA.md, skill) de ese hash. Se bajan una vez y quedan guardadas; si la
     copia guardada no da el hash, se vuelve a bajar."""
     carpeta = REGLAS / sha
-    if carpeta.is_dir() and huella_reglas(carpeta) == sha:
-        return carpeta
+    if not (carpeta.is_dir() and huella_reglas(carpeta) == sha):
+        _bajar_reglas(sha, carpeta)
+    _reglas_al_dia(sha)
+    return carpeta
+
+
+def _bajar_reglas(sha: str, carpeta: Path) -> None:
     enlace = _api("GET", f"/api/v3/reglas?sha={sha}")
     if enlace.get("error"):
         raise RuntimeError(f"no pude pedir las reglas: {enlace['error']}")
@@ -168,7 +188,6 @@ def reglas(sha: str) -> Path:
     for vieja in REGLAS.iterdir():
         if vieja.is_dir() and vieja.name != sha and time.time() - vieja.stat().st_mtime > 7 * 86400:
             shutil.rmtree(vieja, ignore_errors=True)
-    return carpeta
 
 
 def bajar(p: dict) -> Path:
@@ -197,13 +216,91 @@ def bajar(p: dict) -> Path:
 def revisar(p: dict) -> None:
     log(f"#{p['pr']} ({p['repo']}): bajando el paquete")
     carpeta = bajar(p)
+    ai = preparar_ai_context(carpeta)
+    log(f"#{p['pr']}: ai-context {ai[:7]}" if ai else f"#{p['pr']}: sin ai-context (el análisis sigue sin él)")
     pedido = (carpeta / "PEDIDO.txt").read_text(encoding="utf-8")
-    orden = [shutil.which("claude") or "claude", "-p", "--settings", _ajustes_claude(carpeta),
-             "--append-system-prompt-file", str(carpeta / "SISTEMA.md"), "--exclude-dynamic-system-prompt-sections",
-             "--output-format", "stream-json", "--verbose", "--strict-mcp-config",
-             "--allowedTools", *HERRAMIENTAS, *(["--model", p["modelo"]] if p.get("modelo") else [])]
+    propia = p.get("politica") if isinstance(p.get("politica"), dict) else None
+    proveedor, modelo = motor_para(p, None if propia and propia.get("modo") == "fijo" else politica_hodor(), elegidos())
+    log(f"#{p['pr']}: analiza {proveedor} · {modelo or 'por defecto'}")
     inicio = time.time()
-    proc = _lanzar_claude(orden, pedido, carpeta)
+    r = MOTORES[proveedor](p, carpeta, pedido, modelo, inicio)
+    final, sesion, turnos, costo = r["final"], r["sesion"], r["turnos"], r["costo"]
+    sello = {"fila": p["id"], "pr": str(p["pr"]), "paquete_sha": p["paquete_sha"], "reglas_sha": p.get("reglas_sha") or "",
+             "desafio": p["desafio"], "sesion": sesion,
+             "turnos": turnos, "segundos": int(time.time() - inicio), "version": VERSION, "kit": huella_kit(),
+             "proveedor": proveedor, "modelo": modelo, "ai_context": ai}
+    res = _api("POST", "/api/v3/resultado", {"sello": sello, "final": final, "costo": costo, "firma": firma(sello, final)})
+    if res.get("error"):
+        raise RuntimeError(f"Hodor rechazó el resultado: {res['error']}")
+    log(f"#{p['pr']}: listo en {sello['segundos']} s, {turnos} turnos; Hodor lo recibió")
+    _guardar_analisis(p, carpeta, final)
+    with _DB_CANDADO, _db() as con:
+        con.execute("INSERT OR REPLACE INTO sesiones(fila, pr, sesion, carpeta, en) VALUES(?,?,?,?,?)",
+                    (int(p["id"]), str(p["pr"]), sesion if proveedor == "claude" else "", str(carpeta), time.time()))
+    if p.get("previo") and p.get("destino") == "release":
+        crear_plan(int(p["id"]), str(p["pr"]), p.get("repo", ""), p.get("commit", ""))
+
+
+# ── Motores: claude, codex y gemini ──
+
+PROVEEDORES = ("claude", "codex", "gemini")
+DEFECTO_MOTOR = {"proveedor": "claude", "modelo": "opus"}
+MODELOS = {"claude": ["opus", "sonnet", "haiku"], "codex": ["gpt-5-codex", "gpt-5"], "gemini": ["gemini-2.5-pro", "gemini-2.5-flash"]}
+HERRAMIENTAS_GEMINI = ["read_file", "read_many_files", "list_directory", "glob", "search_file_content", "write_file",
+                       "run_shell_command(aws codecommit get-pull-request)", "run_shell_command(aws codecommit get-differences)",
+                       "run_shell_command(aws codecommit get-blob)", "run_shell_command(aws codecommit get-file)",
+                       "run_shell_command(aws codecommit get-comments-for-pull-request)", "run_shell_command(node)"]
+
+
+def _motor_valido(m) -> dict | None:
+    if not isinstance(m, dict) or m.get("proveedor") not in PROVEEDORES:
+        return None
+    return {"proveedor": m["proveedor"], "modelo": str(m.get("modelo") or "")}
+
+
+def motor_para(p: dict, politica: dict | None, elegidos_: dict) -> tuple:
+    repo = str(p.get("repo") or "")
+    pol_hodor = politica if isinstance(politica, dict) and politica.get("disponible", True) else None
+    defecto = _motor_valido((pol_hodor or {}).get("defecto")) or dict(DEFECTO_MOTOR)
+    regla = p.get("politica") if isinstance(p.get("politica"), dict) else None
+    if regla is None and pol_hodor is not None:
+        regla = ((pol_hodor.get("repos") or {}).get(repo)) or {"modo": "fijo", **defecto}
+    if regla is None:
+        return "claude", str(p.get("modelo") or DEFECTO_MOTOR["modelo"])
+    if regla.get("modo") == "libre":
+        elegido = _motor_valido((elegidos_ or {}).get(repo)) or defecto
+        return elegido["proveedor"], elegido["modelo"] or (MODELOS[elegido["proveedor"]][0])
+    fijo = _motor_valido(regla) or defecto
+    return fijo["proveedor"], fijo["modelo"] or defecto["modelo"]
+
+
+def orden_claude(exe: str, carpeta: Path, modelo: str) -> list:
+    return [exe, "-p", "--settings", _ajustes_claude(carpeta),
+            "--append-system-prompt-file", str(carpeta / "SISTEMA.md"), "--exclude-dynamic-system-prompt-sections",
+            "--output-format", "stream-json", "--verbose", "--strict-mcp-config",
+            "--allowedTools", *HERRAMIENTAS, *(["--model", modelo] if modelo else [])]
+
+
+def orden_codex(exe: str, carpeta: Path, modelo: str, salida: Path) -> list:
+    return [exe, "exec", "--json", "--skip-git-repo-check", "--sandbox", "workspace-write",
+            "-c", "sandbox_workspace_write.network_access=true", "-C", str(carpeta),
+            "--output-last-message", str(salida), *(["--model", modelo] if modelo else []), "-"]
+
+
+def orden_gemini(exe: str, modelo: str) -> list:
+    return [exe, *(["--model", modelo] if modelo else []), "--output-format", "json",
+            "--allowed-tools", *HERRAMIENTAS_GEMINI, "-p", "Sigue las instrucciones que recibiste por la entrada estándar."]
+
+
+def _con_sistema(carpeta: Path, pedido: str) -> str:
+    sistema = carpeta / "SISTEMA.md"
+    if not sistema.exists():
+        return pedido
+    return sistema.read_text(encoding="utf-8") + "\n\n---\n\n" + pedido
+
+
+def _motor_claude(p: dict, carpeta: Path, pedido: str, modelo: str, inicio: float) -> dict:
+    proc = _lanzar_claude(orden_claude(shutil.which("claude") or "claude", carpeta, modelo), pedido, carpeta)
     final, sesion, turnos, costo, pasos, ruido = "", "", None, {}, 0, []
     for linea in proc.stdout:
         if time.time() - inicio > ESPERA:
@@ -237,30 +334,698 @@ def revisar(p: dict) -> None:
             costo = {"entrada": uso.get("input_tokens", 0), "salida": uso.get("output_tokens", 0),
                      "cache_lectura": uso.get("cache_read_input_tokens", 0), "cache_escritura": uso.get("cache_creation_input_tokens", 0),
                      "usd": round(float(evento.get("total_cost_usd") or 0), 4), "segundos": int(time.time() - inicio),
-                     "turnos": turnos, "modelo": p.get("modelo") or "por defecto", "worker": VERSION}
+                     "turnos": turnos, "modelo": modelo or "por defecto", "proveedor": "claude", "worker": VERSION}
     proc.wait()
     if not final:
         raise RuntimeError(f"claude no devolvió resultado (código {proc.returncode})" + (f": {' | '.join(ruido)[-400:]}" if ruido else ""))
-    sello = {"fila": p["id"], "pr": str(p["pr"]), "paquete_sha": p["paquete_sha"], "reglas_sha": p.get("reglas_sha") or "",
-             "desafio": p["desafio"], "sesion": sesion,
-             "turnos": turnos, "segundos": int(time.time() - inicio), "version": VERSION, "kit": huella_kit()}
-    res = _api("POST", "/api/v3/resultado", {"sello": sello, "final": final, "costo": costo, "firma": firma(sello, final)})
-    if res.get("error"):
-        raise RuntimeError(f"Hodor rechazó el resultado: {res['error']}")
-    log(f"#{p['pr']}: listo en {sello['segundos']} s, {turnos} turnos; Hodor lo recibió")
-    _guardar_analisis(p, carpeta, final)
-    with _DB_CANDADO, _db() as con:
-        con.execute("INSERT OR REPLACE INTO sesiones(fila, pr, sesion, carpeta, en) VALUES(?,?,?,?,?)",
-                    (int(p["id"]), str(p["pr"]), sesion, str(carpeta), time.time()))
-    if p.get("previo") and p.get("destino") == "release":
-        crear_plan(int(p["id"]), str(p["pr"]), p.get("repo", ""), p.get("commit", ""))
+    return {"final": final, "sesion": sesion, "turnos": turnos, "costo": costo}
+
+
+def _motor_codex(p: dict, carpeta: Path, pedido: str, modelo: str, inicio: float) -> dict:
+    exe = shutil.which("codex")
+    if not exe:
+        raise RuntimeError("codex no está instalado en esta máquina (la política del repo pide codex)")
+    salida = carpeta / ".codex-final.txt"
+    salida.unlink(missing_ok=True)
+    proc = _lanzar_claude(orden_codex(exe, carpeta, modelo, salida), _con_sistema(carpeta, pedido), carpeta)
+    sesion, pasos, uso, ruido, ultimo, turnos = "", 0, {}, [], "", 0
+    for linea in proc.stdout:
+        if time.time() - inicio > ESPERA:
+            proc.kill()
+            raise TimeoutError("la revisión pasó de 30 min")
+        try:
+            evento = json.loads(linea)
+        except ValueError:
+            evento = None
+        if not isinstance(evento, dict):
+            ruido = (ruido + [linea.strip()])[-5:] if linea.strip() else ruido
+            _salida()[:] = ruido
+            continue
+        tipo = str(evento.get("type") or "")
+        item = evento.get("item") if isinstance(evento.get("item"), dict) else {}
+        if tipo == "thread.started":
+            sesion = str(evento.get("thread_id") or sesion)
+        elif tipo == "item.completed" and item.get("type") in ("agent_message", "assistant_message"):
+            ultimo = str(item.get("text") or ultimo)
+        elif tipo == "item.started" and item.get("type") in ("command_execution", "file_change", "mcp_tool_call", "web_search"):
+            pasos += 1
+            if pasos > int(p.get("max_pasos") or 60):
+                proc.kill()
+                raise RuntimeError("la revisión pasó del tope de pasos")
+        elif tipo == "turn.completed":
+            turnos += 1
+            uso = evento.get("usage") or uso
+        elif tipo == "turn.failed":
+            proc.kill()
+            detalle = (evento.get("error") or {}).get("message") if isinstance(evento.get("error"), dict) else evento.get("error")
+            raise RuntimeError(f"codex terminó con error: {' '.join(str(detalle).split())[:300]}")
+        elif tipo == "error":
+            ruido = (ruido + [str(evento.get("message") or "")])[-5:]
+            _salida()[:] = ruido
+    proc.wait()
+    final = salida.read_text(encoding="utf-8", errors="replace").strip() if salida.exists() else ""
+    final = final or ultimo
+    if not final:
+        raise RuntimeError(f"codex no devolvió resultado (código {proc.returncode})" + (f": {' | '.join(ruido)[-400:]}" if ruido else ""))
+    costo = {"entrada": uso.get("input_tokens", 0), "salida": uso.get("output_tokens", 0), "cache_lectura": uso.get("cached_input_tokens", 0),
+             "cache_escritura": 0, "usd": 0, "segundos": int(time.time() - inicio), "turnos": turnos or None,
+             "modelo": modelo or "por defecto", "proveedor": "codex", "worker": VERSION}
+    return {"final": final, "sesion": sesion, "turnos": turnos or None, "costo": costo}
+
+
+def json_gemini(crudo: str) -> dict | None:
+    decodificador = json.JSONDecoder()
+    inicios = [0] + [i + 1 for i, c in enumerate(crudo) if c == "\n"]
+    hallado = None
+    for i in inicios:
+        trozo = crudo[i:].lstrip()
+        if not trozo.startswith("{"):
+            continue
+        try:
+            datos, _fin = decodificador.raw_decode(trozo)
+        except ValueError:
+            continue
+        if isinstance(datos, dict) and ("response" in datos or "error" in datos):
+            hallado = datos
+    return hallado
+
+
+def _motor_gemini(p: dict, carpeta: Path, pedido: str, modelo: str, inicio: float) -> dict:
+    exe = shutil.which("gemini")
+    if not exe:
+        raise RuntimeError("gemini no está instalado en esta máquina (la política del repo pide gemini)")
+    proc = _lanzar_claude(orden_gemini(exe, modelo), _con_sistema(carpeta, pedido), carpeta)
+    lineas = []
+    for linea in proc.stdout:
+        if time.time() - inicio > ESPERA:
+            proc.kill()
+            raise TimeoutError("la revisión pasó de 30 min")
+        lineas.append(linea)
+        _salida()[:] = [x.strip() for x in lineas[-5:] if x.strip()]
+    proc.wait()
+    crudo = "".join(lineas)
+    datos = json_gemini(crudo)
+    if datos and datos.get("error"):
+        error = datos["error"].get("message") if isinstance(datos["error"], dict) else datos["error"]
+        raise RuntimeError(f"gemini terminó con error: {' '.join(str(error).split())[:300]}")
+    final = str((datos or {}).get("response") or "") or (crudo.strip() if proc.returncode == 0 and datos is None else "")
+    if not final:
+        raise RuntimeError(f"gemini no devolvió resultado (código {proc.returncode}): {' '.join(crudo.split())[-400:]}")
+    entrada = salida_t = cache = 0
+    for m in (((datos or {}).get("stats") or {}).get("models") or {}).values():
+        fichas = (m or {}).get("tokens") or {}
+        entrada += int(fichas.get("prompt") or 0)
+        salida_t += int(fichas.get("candidates") or 0)
+        cache += int(fichas.get("cached") or 0)
+    costo = {"entrada": entrada, "salida": salida_t, "cache_lectura": cache, "cache_escritura": 0, "usd": 0,
+             "segundos": int(time.time() - inicio), "turnos": None, "modelo": modelo or "por defecto", "proveedor": "gemini", "worker": VERSION}
+    return {"final": final, "sesion": "", "turnos": None, "costo": costo}
+
+
+MOTORES = {"claude": _motor_claude, "codex": _motor_codex, "gemini": _motor_gemini}
+
+
+def _correr_corto(orden: list, espera: int = 20) -> subprocess.CompletedProcess | None:
+    try:
+        return subprocess.run(orden, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=espera,
+                              creationflags=SIN_VENTANA, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def _sesion_gemini() -> bool:
+    if any(os.environ.get(v) for v in ("GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENAI_USE_VERTEXAI")):
+        return True
+    base = Path.home() / ".gemini"
+    if (base / "oauth_creds.json").exists():
+        return True
+    try:
+        ajustes = json.loads((base / "settings.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    seguridad = ajustes.get("security") if isinstance(ajustes.get("security"), dict) else {}
+    return bool(ajustes.get("selectedAuthType") or ((seguridad.get("auth") or {}).get("selectedType")))
+
+
+def probar(proveedor: str) -> dict:
+    if proveedor not in PROVEEDORES:
+        return {"proveedor": proveedor, "instalado": False, "sesion": False, "listo": False, "detalle": "proveedor desconocido"}
+    exe = shutil.which(proveedor)
+    if not exe:
+        return {"proveedor": proveedor, "instalado": False, "sesion": False, "listo": False, "detalle": "no instalado"}
+    version = _correr_corto([exe, "--version"])
+    texto_version = " ".join(((version.stdout or "") if version else "").split())[:80]
+    sesion, detalle = False, ""
+    if proveedor == "claude":
+        r = _correr_corto([exe, "auth", "status", "--json"])
+        try:
+            sesion = bool(json.loads(r.stdout).get("loggedIn")) if r else False
+        except (ValueError, AttributeError):
+            sesion = False
+        detalle = "" if sesion else "sin sesión: corre `claude` e inicia sesión"
+    elif proveedor == "codex":
+        r = _correr_corto([exe, "login", "status"])
+        salida = " ".join(((r.stdout or "") + " " + (r.stderr or "")).split()) if r else ""
+        sesion = bool(r) and r.returncode == 0 and "not logged" not in salida.lower()
+        detalle = "" if sesion else "sin sesión: corre `codex login`"
+    else:
+        sesion = _sesion_gemini()
+        detalle = "" if sesion else "sin sesión: corre `gemini` una vez e inicia sesión, o define GEMINI_API_KEY"
+    return {"proveedor": proveedor, "instalado": True, "sesion": sesion, "listo": sesion, "version": texto_version, "detalle": detalle}
+
+
+_CACHE: dict = {}
+_CACHE_CANDADO = threading.Lock()
+
+
+def _en_cache(clave: str, segundos: float, fn):
+    with _CACHE_CANDADO:
+        guardado = _CACHE.get(clave)
+        if guardado and time.time() - guardado[0] < segundos:
+            return guardado[1]
+    valor = fn()
+    with _CACHE_CANDADO:
+        _CACHE[clave] = (time.time(), valor)
+    return valor
+
+
+def _api_nuevo(metodo: str, ruta: str, cuerpo: dict | None = None) -> dict:
+    try:
+        res = _api(metodo, ruta, cuerpo)
+    except (urllib.error.URLError, OSError, ValueError) as err:
+        return {"disponible": False, "motivo": str(err)[:200]}
+    if not isinstance(res, dict) or res.get("error"):
+        return {"disponible": False, "motivo": str((res or {}).get("error") if isinstance(res, dict) else "respuesta inválida")[:200],
+                "status": res.get("status") if isinstance(res, dict) else None}
+    return {**res, "disponible": True}
+
+
+def politica_hodor() -> dict:
+    p = _en_cache("politica", 300, lambda: _api_nuevo("GET", "/api/v3/politica"))
+    _anotar_dev(p.get("dev") if isinstance(p, dict) else "")
+    return p
+
+
+def _anotar_dev(correo) -> None:
+    correo = str(correo or "").strip().lower()
+    if "@" in correo and correo != ajuste("dev_correo"):
+        poner_ajuste("dev_correo", correo)
+
+
+def correo_dev() -> str:
+    if not ajuste("dev_correo"):
+        politica_hodor()
+    return ajuste("dev_correo")
+
+
+def elegidos() -> dict:
+    try:
+        datos = json.loads(ajuste("modelos_elegidos", "{}") or "{}")
+    except ValueError:
+        return {}
+    return {r: m for r, m in datos.items() if _motor_valido(m)} if isinstance(datos, dict) else {}
+
+
+def modelos_panel() -> dict:
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=3) as hilos:
+        pruebas = dict(zip(PROVEEDORES, hilos.map(lambda x: _en_cache(f"probar:{x}", 600, lambda: probar(x)), PROVEEDORES)))
+    return {"proveedores": {x: {**pruebas[x], "modelos": MODELOS[x]} for x in PROVEEDORES},
+            "politica": politica_hodor(), "elegidos": elegidos(), "defecto": DEFECTO_MOTOR}
+
+
+def elegir_modelo(repo: str, proveedor: str, modelo: str) -> dict:
+    import re
+    repo, proveedor, modelo = repo.strip(), proveedor.strip(), modelo.strip()
+    if not re.fullmatch(r"[A-Za-z0-9._-]{1,100}", repo):
+        return {"error": "repo inválido"}
+    actuales = elegidos()
+    if not proveedor:
+        actuales.pop(repo, None)
+        poner_ajuste("modelos_elegidos", json.dumps(actuales))
+        return {"ok": True, "elegidos": actuales}
+    if proveedor not in PROVEEDORES:
+        return {"error": f"proveedor inválido: usa {', '.join(PROVEEDORES)}"}
+    if modelo and not re.fullmatch(r"[A-Za-z0-9._:/-]{1,80}", modelo):
+        return {"error": "modelo inválido"}
+    pol = politica_hodor()
+    if pol.get("disponible"):
+        regla = (pol.get("repos") or {}).get(repo) or {"modo": "fijo"}
+        if regla.get("modo") != "libre":
+            return {"error": f"{repo} tiene modelo fijo definido por el revisor: no se puede cambiar aquí"}
+    actuales[repo] = {"proveedor": proveedor, "modelo": modelo or MODELOS[proveedor][0]}
+    poner_ajuste("modelos_elegidos", json.dumps(actuales))
+    return {"ok": True, "elegidos": actuales}
+
+
+# ── Skill g66-lineamientos ──
+
+SKILL_NOMBRE = "g66-lineamientos"
+SKILL_MARCA = ".hodor-worker.json"
+SKILL_DESCRIPCION = ("Lineamientos backend de Global66 (G66) y reglas del equipo con las que Hodor revisa los PRs. Úsala SIEMPRE "
+                     "que escribas, modifiques, refactorices, pruebes o revises código Java/Spring Boot en un repositorio de "
+                     "microservicio de Global66 (repos o carpetas ms-*, por ejemplo ms-company o ms-wallet-b2b): controladores "
+                     "REST, servicios, JPA y queries MySQL, Retrofit, SQS, caché Redis, logs, Swagger/OpenAPI, Liquibase, "
+                     "manejo de errores con ApiRestException, tests y descripción del PR.")
+
+
+def carpeta_skill() -> Path:
+    return Path.home() / ".claude" / "skills" / SKILL_NOMBRE
+
+
+def reglas_equipo(sistema: str) -> list:
+    prefijo = "Regla del equipo:"
+    return [linea.strip()[len(prefijo):].strip() for linea in (sistema or "").splitlines() if linea.strip().startswith(prefijo)]
+
+
+def _lineamientos(origen: Path) -> list:
+    base = origen / "lineamientos"
+    if not base.is_dir():
+        return []
+    return sorted((x for x in base.rglob("*.md") if x.is_file()), key=lambda x: str(x.relative_to(base)).lower())
+
+
+AI_CONTEXT_BASE = "shared/rules/groups/backend/"
+CADA_FETCH_AI = 3600
+_AI: dict = {"fetch_en": 0.0, "commit": "", "fecha": 0.0, "archivos": {}}
+_AI_FETCH = threading.Lock()
+_AI_LEER = threading.Lock()
+
+
+def clon_ai_context() -> Path | None:
+    if not CONFIG.get("repos"):
+        return None
+    carpeta, _error = pruebas_dev.ai_context(Path(str(CONFIG["repos"])).expanduser())
+    return carpeta
+
+
+def _git_ai(clon: Path, *args: str, espera: int = 60) -> str:
+    return subprocess.run(["git", "-C", str(clon), *args], capture_output=True, text=True, encoding="utf-8", errors="replace",
+                          timeout=espera, check=True, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+                          creationflags=SIN_VENTANA).stdout
+
+
+def fetch_ai_context(cada: float = 0) -> None:
+    clon = clon_ai_context()
+    if VISTA or not clon:
+        return
+    with _AI_FETCH:
+        if cada and time.time() - _AI["fetch_en"] < cada:
+            return
+        _AI["fetch_en"] = time.time()
+        try:
+            _git_ai(clon, "fetch", "origin", "master", espera=300)
+        except Exception as err:  # noqa: BLE001
+            detalle = (getattr(err, "stderr", "") or str(err)).strip()
+            log(f"ai-context: git fetch falló, uso lo último que tengo: {detalle[:200]}")
+
+
+def leer_ai_context() -> dict:
+    clon = clon_ai_context()
+    if not clon:
+        return {}
+    with _AI_LEER:
+        try:
+            commit = _git_ai(clon, "rev-parse", "--verify", "origin/master^{commit}").strip()
+            if commit and _AI["commit"] == commit:
+                return {"commit": commit, "fecha": _AI["fecha"], "archivos": _AI["archivos"]}
+            archivos = {}
+            for linea in _git_ai(clon, "ls-tree", "-z", commit, AI_CONTEXT_BASE).split("\0"):
+                meta, _, camino = linea.partition("\t")
+                if meta.split()[1:2] == ["blob"] and camino.endswith(".md") and camino.count("/") == AI_CONTEXT_BASE.count("/"):
+                    archivos[camino.rsplit("/", 1)[-1]] = _git_ai(clon, "show", f"{commit}:{camino}")
+            if not archivos:
+                return {}
+            fecha = float(_git_ai(clon, "log", "-1", "--format=%ct", commit).strip() or 0)
+            _AI.update(commit=commit, fecha=fecha, archivos=archivos)
+            return {"commit": commit, "fecha": fecha, "archivos": archivos}
+        except Exception as err:  # noqa: BLE001
+            detalle = (getattr(err, "stderr", "") or str(err)).strip()
+            log(f"ai-context: no pude leer origin/master de {clon}: {detalle[:200]}")
+            return {}
+
+
+def preparar_ai_context(carpeta: Path) -> str | None:
+    destino = carpeta / "ai-context"
+    try:
+        shutil.rmtree(destino, ignore_errors=True)
+        fetch_ai_context(CADA_FETCH_AI)
+        ai = leer_ai_context()
+        if not ai:
+            return None
+        for nombre, texto in ai["archivos"].items():
+            ruta = destino / "backend" / nombre
+            ruta.parent.mkdir(parents=True, exist_ok=True)
+            ruta.write_text(texto, encoding="utf-8")
+        return ai["commit"]
+    except Exception as err:  # noqa: BLE001
+        log(f"ai-context: no pude prepararlo para el análisis: {str(err)[:200]}")
+        shutil.rmtree(destino, ignore_errors=True)
+        return None
+
+
+def estado_ai_context() -> dict:
+    if not CONFIG.get("repos"):
+        return {"commit": "", "fecha": 0, "archivos": 0, "error": "falta la carpeta de microservicios"}
+    _carpeta, error = pruebas_dev.ai_context(Path(str(CONFIG["repos"])).expanduser())
+    ai = {} if error else leer_ai_context()
+    return {"commit": ai.get("commit", ""), "fecha": ai.get("fecha", 0), "archivos": len(ai.get("archivos") or {}),
+            "fetch_en": _AI["fetch_en"], "error": error or ("" if ai else f"no pude leer origin/master:{AI_CONTEXT_BASE}")}
+
+
+def ai_context_y_skill() -> None:
+    fetch_ai_context()
+    skill_al_dia()
+
+
+def reglas_md(origen: Path, catalogo: dict | None) -> str:
+    partes = ["# Reglas del equipo\n", "Lo que el revisor de Hodor reporta como hallazgo. Aplícalas a las líneas que agregas o modificas.\n"]
+    lista = (catalogo or {}).get("reglas") if isinstance(catalogo, dict) and catalogo.get("disponible", True) else None
+    if isinstance(lista, list) and lista:
+        for r in lista:
+            if not isinstance(r, dict):
+                continue
+            cabeza = f"## {r.get('titulo') or r.get('id') or 'Regla'}"
+            meta = " · ".join(str(x) for x in (r.get("tema"), r.get("severidad")) if x)
+            partes.append(cabeza + (f"\n\n_{meta}_" if meta else "") + f"\n\n{r.get('texto') or ''}".rstrip())
+            fuente = r.get("fuente") if isinstance(r.get("fuente"), dict) else None
+            if fuente:
+                partes.append(f"Fuente: `{fuente.get('archivo')}` › {fuente.get('seccion') or ''}\n\n> {fuente.get('cita') or ''}".rstrip())
+        return "\n\n".join(partes) + "\n"
+    sistema = origen / "SISTEMA.md"
+    for texto in reglas_equipo(sistema.read_text(encoding="utf-8") if sistema.exists() else ""):
+        partes.append(f"- {texto}")
+    return "\n".join(partes) + "\n"
+
+
+def skill_md(sha: str, nombres: list, contexto: list | None = None, ai_commit: str = "") -> str:
+    indice = "\n".join(f"- `lineamientos/{n}`" for n in nombres) or "- (esta versión de las reglas no trae lineamientos)"
+    cabeza = (f"---\nname: {SKILL_NOMBRE}\ndescription: {SKILL_DESCRIPCION}\n---\n\n"
+              f"# Lineamientos G66 (reglas {sha[:12]}{f' · ai-context {ai_commit[:7]}' if ai_commit else ''})\n\n")
+    pie = (f"La generó el worker de Hodor ({VERSION}) y se reescribe cuando cambian las reglas"
+           f"{' o el ai-context' if ai_commit else ''}: no la edites a mano.\n")
+    if not contexto:
+        return (cabeza + "Antes de escribir o cambiar código en un ms-* de Global66:\n\n"
+                "1. Lee `reglas.md`: son las reglas del equipo, lo que el revisor de Hodor reporta como hallazgo.\n"
+                "2. Según lo que vayas a tocar, lee el lineamiento que corresponda:\n\n"
+                f"{indice}\n\n"
+                "3. Aplica las reglas a las líneas que agregas o modificas; no reescribas código que el cambio no toca.\n"
+                "4. Si lo que te piden choca con una regla, dilo antes de escribir el código.\n"
+                "5. Antes de dar el cambio por terminado, repasa `reglas.md` contra tu diff.\n\n" + pie)
+    indice_ctx = "\n".join(f"- `ai-context/backend/{n}`" for n in contexto)
+    return (cabeza + "Orden de prioridad (se complementan; ninguna reemplaza a otra):\n\n"
+            "1. Reglas del equipo (`reglas.md`) y `lineamientos/custom-guidelines.md`: si chocan con el ai-context, ganan ellas.\n"
+            "2. ai-context de G66 (`ai-context/backend/`, copia de `shared/rules/groups/backend/` de origin/master de tu clon del "
+            "repo `ai-context`): la referencia principal para todo lo demás.\n"
+            "3. Lineamientos G66 (`lineamientos/`): para lo que el ai-context no cubre (API Gateway, Spotless, template de PR, "
+            "aprobaciones, etc.).\n\n"
+            "Antes de escribir o cambiar código en un ms-* de Global66:\n\n"
+            "1. Lee `reglas.md`: son las reglas del equipo, lo que el revisor de Hodor reporta como hallazgo.\n"
+            "2. Según lo que vayas a tocar, lee el archivo del ai-context que corresponda:\n\n"
+            f"{indice_ctx}\n\n"
+            "3. Para lo que el ai-context no cubre, lee el lineamiento que corresponda:\n\n"
+            f"{indice}\n\n"
+            "4. Aplica las reglas a las líneas que agregas o modificas; no reescribas código que el cambio no toca.\n"
+            "5. Si lo que te piden choca con una regla, dilo antes de escribir el código.\n"
+            "6. Antes de dar el cambio por terminado, repasa `reglas.md` contra tu diff.\n\n" + pie)
+
+
+def armar_skill(origen: Path, sha: str, catalogo: dict | None = None, ai: dict | None = None) -> dict:
+    base = origen / "lineamientos"
+    archivos = {f"lineamientos/{str(x.relative_to(base)).replace(chr(92), '/')}": x.read_text(encoding="utf-8", errors="replace")
+                for x in _lineamientos(origen)}
+    nombres = [k.split("/", 1)[1] for k in archivos]
+    ai = ai or {}
+    contexto = {f"ai-context/backend/{n}": texto for n, texto in sorted((ai.get("archivos") or {}).items(), key=lambda x: x[0].lower())}
+    return {"SKILL.md": skill_md(sha, nombres, [k.rsplit("/", 1)[1] for k in contexto], ai.get("commit", "") if contexto else ""),
+            "reglas.md": reglas_md(origen, catalogo), **archivos, **contexto}
+
+
+def escribir_skill(archivos: dict, sha: str, destino: Path | None = None, ai_commit: str = "") -> Path:
+    destino = destino or carpeta_skill()
+    if destino.exists() and not (destino / SKILL_MARCA).exists():
+        raise RuntimeError(f"ya hay una skill {SKILL_NOMBRE} en {destino} que no instaló el worker: bórrala o renómbrala primero")
+    nueva = destino.parent / f".{SKILL_NOMBRE}.nueva-{int(time.time() * 1000)}"
+    shutil.rmtree(nueva, ignore_errors=True)
+    for nombre, texto in archivos.items():
+        ruta = nueva / nombre
+        ruta.parent.mkdir(parents=True, exist_ok=True)
+        ruta.write_text(texto, encoding="utf-8")
+    (nueva / SKILL_MARCA).write_text(json.dumps({"sha": sha, "ai_context": ai_commit, "version": VERSION, "en": time.time()}), encoding="utf-8")
+    shutil.rmtree(destino, ignore_errors=True)
+    nueva.rename(destino)
+    return destino
+
+
+def _marca_skill() -> dict:
+    try:
+        return json.loads((carpeta_skill() / SKILL_MARCA).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def catalogo_reglas() -> dict:
+    return _en_cache("catalogo", 300, lambda: _api_nuevo("GET", "/api/v3/reglas/catalogo"))
+
+
+def ultimo_sha(catalogo: dict | None = None) -> str:
+    if catalogo and catalogo.get("disponible") and catalogo.get("version"):
+        return str(catalogo["version"])
+    return ajuste("reglas_sha", "")
+
+
+def _skill_al_dia_con(marca: dict, sha: str, ai_commit: str) -> bool:
+    return bool(marca.get("sha")) and (marca.get("sha") == sha or not sha) and (marca.get("ai_context") or "") == ai_commit
+
+
+def estado_skill(catalogo: dict | None = None) -> dict:
+    instalada = (carpeta_skill() / "SKILL.md").exists()
+    marca, actual, ai_commit = _marca_skill(), ultimo_sha(catalogo), leer_ai_context().get("commit", "")
+    return {"instalada": instalada, "al_dia": instalada and _skill_al_dia_con(marca, actual, ai_commit), "ruta": str(carpeta_skill()),
+            "auto": ajuste("skill_auto") == "1", "sha": marca.get("sha") or "", "reglas_sha": actual,
+            "ai_context": marca.get("ai_context") or "", "ai_context_actual": ai_commit}
+
+
+def origen_reglas(catalogo: dict | None = None) -> tuple:
+    candidatos = [s for s in dict.fromkeys([ultimo_sha(catalogo), ajuste("reglas_sha", "")]) if s]
+    if REGLAS.is_dir():
+        candidatos += [x.name for x in sorted(REGLAS.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True)
+                       if x.is_dir() and "." not in x.name and x.name not in candidatos]
+    ultimo_error = "todavía no tengo reglas en esta máquina: analiza un PR primero"
+    for sha in candidatos:
+        try:
+            return sha, reglas(sha)
+        except Exception as err:  # noqa: BLE001
+            ultimo_error = str(err)[:300]
+    raise RuntimeError(ultimo_error)
+
+
+def instalar_skill(catalogo: dict | None = None) -> dict:
+    if VISTA:
+        return {"error": "vista previa: no se instala la skill"}
+    catalogo = catalogo if catalogo is not None else catalogo_reglas()
+    try:
+        sha, origen = origen_reglas(catalogo)
+        ai = leer_ai_context()
+        escribir_skill(armar_skill(origen, sha, catalogo, ai), sha, ai_commit=ai.get("commit", ""))
+    except Exception as err:  # noqa: BLE001
+        return {"error": str(err)[:300]}
+    log(f"skill {SKILL_NOMBRE} instalada con las reglas {sha[:12]}" + (f" y el ai-context {ai['commit'][:7]}" if ai else " (sin ai-context)"))
+    return {"ok": True, "skill": estado_skill(catalogo)}
+
+
+_SKILL_CANDADO = threading.Lock()
+
+
+def _reglas_al_dia(sha: str) -> None:
+    if ajuste("reglas_sha", "") != sha:
+        poner_ajuste("reglas_sha", sha)
+    if VISTA or ajuste("skill_auto") != "1":
+        return
+    ai = leer_ai_context()
+    if _skill_al_dia_con(_marca_skill(), sha, ai.get("commit", "")) or not _SKILL_CANDADO.acquire(blocking=False):
+        return
+    try:
+        catalogo = catalogo_reglas()
+        escribir_skill(armar_skill(REGLAS / sha, sha, catalogo if catalogo.get("version") in (None, sha) else None, ai), sha,
+                       ai_commit=ai.get("commit", ""))
+        log(f"skill {SKILL_NOMBRE} al día con las reglas {sha[:12]}" + (f" y el ai-context {ai['commit'][:7]}" if ai else ""))
+    except Exception as err:  # noqa: BLE001
+        log(f"skill {SKILL_NOMBRE}: {str(err)[:300]}")
+    finally:
+        _SKILL_CANDADO.release()
+
+
+def skill_al_dia() -> None:
+    if VISTA or ajuste("skill_auto") != "1":
+        return
+    with _CACHE_CANDADO:
+        _CACHE.pop("catalogo", None)
+    catalogo = catalogo_reglas()
+    sha = (str(catalogo.get("version") or "") if catalogo.get("disponible") else "") or ajuste("reglas_sha", "")
+    if not sha or _skill_al_dia_con(_marca_skill(), sha, leer_ai_context().get("commit", "")):
+        return
+    if not _SKILL_CANDADO.acquire(blocking=False):
+        return
+    try:
+        res = instalar_skill(catalogo)
+        if res.get("error"):
+            log(f"skill {SKILL_NOMBRE}: {res['error']}")
+    finally:
+        _SKILL_CANDADO.release()
+
+
+def pedir_skill(cuerpo: dict) -> dict:
+    accion = str(cuerpo.get("accion") or "")
+    if accion == "instalar":
+        return instalar_skill()
+    if accion == "auto":
+        poner_ajuste("skill_auto", "1" if cuerpo.get("auto") else "0")
+        catalogo = catalogo_reglas()
+        if cuerpo.get("auto") and not estado_skill(catalogo)["al_dia"]:
+            res = instalar_skill(catalogo)
+            if res.get("error"):
+                return {"error": res["error"], "skill": estado_skill(catalogo)}
+        return {"ok": True, "skill": estado_skill(catalogo)}
+    return {"error": "acción inválida: usa instalar o auto"}
+
+
+def reglas_panel() -> dict:
+    catalogo = catalogo_reglas()
+    skill = estado_skill(catalogo)
+    if skill["auto"] and not skill["al_dia"] and not VISTA:
+        threading.Thread(target=instalar_skill, args=(catalogo,), daemon=True).start()
+    return {**catalogo, "skill": skill, "ai_context": estado_ai_context()}
+
+
+def texto_claude_md() -> dict:
+    catalogo = catalogo_reglas()
+    try:
+        sha, origen = origen_reglas(catalogo)
+    except Exception as err:  # noqa: BLE001
+        return {"error": str(err)[:300]}
+    nombres = [str(x.relative_to(origen / "lineamientos")).replace("\\", "/") for x in _lineamientos(origen)]
+    texto = ("# Lineamientos G66\n\n"
+             "Este repositorio es un microservicio de Global66: su código lo revisa Hodor con los lineamientos G66 y las reglas del equipo.\n\n"
+             f"- Si tienes la skill `{SKILL_NOMBRE}` instalada, cárgala antes de escribir o modificar código.\n"
+             "- Aplica las reglas a las líneas que agregas o modificas y repásalas contra tu diff antes de terminar.\n\n"
+             + reglas_md(origen, catalogo).replace("# Reglas del equipo", "## Reglas del equipo", 1)
+             + "\n## Lineamientos\n\n" + ("\n".join(f"- {n}" for n in nombres) or "- (sin lineamientos en esta versión)") + "\n"
+             + f"\n_Reglas {sha[:12]} · {VERSION}_\n")
+    return {"texto": texto, "nombre": "CLAUDE.md", "sha": sha}
+
+
+def texto_exportar() -> dict:
+    catalogo = catalogo_reglas()
+    try:
+        sha, origen = origen_reglas(catalogo)
+    except Exception as err:  # noqa: BLE001
+        return {"error": str(err)[:300]}
+    archivos = armar_skill(origen, sha, catalogo, leer_ai_context())
+    cuerpo = archivos.pop("SKILL.md").split("---\n", 2)[-1].lstrip()
+    partes = [cuerpo, archivos.pop("reglas.md")]
+    for nombre, texto in archivos.items():
+        partes.append(f"# {nombre}\n\n{texto.strip()}\n")
+    return {"texto": "\n\n---\n\n".join(partes), "nombre": "lineamientos-g66.md", "sha": sha}
+
+
+# ── Conexión con Hodor ──
+
+_PING = {"corriendo": False, "version_en": 0.0, "version_nueva": None}
+
+
+def num_version(texto: str) -> tuple:
+    import re
+    m = re.search(r"(\d+(?:\.\d+)*)", texto or "")
+    return tuple(int(x) for x in m.group(1).split(".")) if m else ()
+
+
+def _ping() -> None:
+    try:
+        res = _api_nuevo("GET", "/api/v3/politica")
+        if not res.get("disponible") and res.get("status") is None:
+            _HODOR["fallo"] = time.time()
+        if res.get("disponible"):
+            with _CACHE_CANDADO:
+                _CACHE["politica"] = (time.time(), res)
+    finally:
+        _PING["corriendo"] = False
+
+
+def _buscar_version() -> None:
+    import re
+    repo = Path(str(CONFIG.get("repo_kit") or ""))
+    if not (repo / ".git").exists():
+        return
+    try:
+        if _git("fetch", "-q", "origin").returncode != 0:
+            return
+        r = _git("show", "@{u}:revisor_dev.py")
+        m = re.search(r'^VERSION = "v3-worker ([\d.]+)"', r.stdout or "", re.M)
+        if m and num_version(m.group(1)) > num_version(VERSION):
+            _PING["version_nueva"] = m.group(1)
+        elif m:
+            _PING["version_nueva"] = None
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def conexion() -> dict:
+    ahora = time.time()
+    if ahora - max(_HODOR["respuesta"], _HODOR["fallo"]) > 300 and not _PING["corriendo"]:
+        _PING["corriendo"] = True
+        threading.Thread(target=_ping, daemon=True).start()
+    if ahora - _PING["version_en"] > CADA_ACTUALIZAR:
+        _PING["version_en"] = ahora
+        threading.Thread(target=_buscar_version, daemon=True).start()
+    return {"conectado": _HODOR["respuesta"] > 0 and _HODOR["respuesta"] >= _HODOR["fallo"], "ultima_respuesta": int(_HODOR["respuesta"]) or None,
+            "corriendo": len(_CORRIENDO), "tope": tope_agentes(), "version": VERSION, "reglas_sha": ajuste("reglas_sha", ""),
+            "version_nueva": _PING["version_nueva"]}
+
+
+def admin_devs() -> dict:
+    res = _api_nuevo("GET", "/api/v3/admin/devs")
+    if not res.get("disponible") or not isinstance(res.get("devs"), list):
+        return {"disponible": False}
+    return {"disponible": True, "devs": res["devs"], "yo": res.get("yo", ""), "ver_como": VER_COMO["correo"]}
+
+
+def poner_ver_como(correo: str) -> dict:
+    correo = str(correo or "").strip().lower()
+    if not correo:
+        VER_COMO.update(correo="", nombre="")
+        return {"ok": True, "ver_como": ""}
+    lista = admin_devs()
+    if not lista.get("disponible"):
+        return {"error": "Solo el revisor puede ver como otro dev."}
+    dev = next((d for d in lista["devs"] if str(d.get("correo") or "").lower() == correo), None)
+    if not dev:
+        return {"error": "Ese dev no está en la v3."}
+    if correo == str(lista.get("yo") or "").lower():
+        VER_COMO.update(correo="", nombre="")
+        return {"ok": True, "ver_como": ""}
+    VER_COMO.update(correo=correo, nombre=str(dev.get("nombre") or correo))
+    log(f"ver como {correo}")
+    return {"ok": True, "ver_como": correo, "nombre": VER_COMO["nombre"]}
+
+
+def historial(pr: str) -> dict:
+    if not pr.isdigit():
+        return {"disponible": False, "motivo": "PR inválido"}
+    try:
+        res = _api("GET", f"/api/v3/historial?pr={pr}", como=True)
+    except (urllib.error.URLError, OSError, ValueError) as err:
+        return {"disponible": False, "motivo": str(err)[:200]}
+    if not isinstance(res, dict) or res.get("error"):
+        return {"disponible": False, "motivo": str((res or {}).get("error") if isinstance(res, dict) else "respuesta inválida")[:200]}
+    return {**res, "disponible": True}
 
 
 def _guardar_analisis(p: dict, carpeta: Path, final: str) -> Path:
     """Deja el análisis en ~/.hodor-v3/analisis/pr<N>.md para abrirlo en la terminal (y los reportes que escribió Claude)."""
     ANALISIS.mkdir(parents=True, exist_ok=True)
     reportes = [r for r in carpeta.rglob("*.md") if r.name not in ("SISTEMA.md",) and "lineamientos" not in r.parts
-                and ".claude" not in r.parts and r.stat().st_size > 200]
+                and "ai-context" not in r.parts and ".claude" not in r.parts and r.stat().st_size > 200]
     partes = [f"# Análisis de Hodor · {p.get('repo')} #{p['pr']}\n", final]
     for r in reportes[:3]:
         partes.append(f"\n\n---\n## Reporte: {r.name}\n\n" + r.read_text(encoding="utf-8", errors="replace"))
@@ -278,7 +1043,15 @@ def limpiar_sesiones(dias: int = 14) -> None:
 
 
 TOPE_FALLOS = 3
-TOPE_AGENTES = 5
+TOPE_AGENTES_DEFECTO = 5
+
+
+def tope_agentes() -> int:
+    try:
+        n = int((politica_hodor() or {}).get("agentes") or 0)
+    except (TypeError, ValueError):
+        n = 0
+    return max(1, min(n, 10)) if n else TOPE_AGENTES_DEFECTO
 _SALIDAS: dict = {}
 _CORRIENDO: dict = {}
 _EN_ESPERA: list = []
@@ -342,12 +1115,13 @@ def atento(segundos: float = 30 * 60) -> None:
 
 
 def una_vuelta(esperar: bool = False) -> int:
-    """Cada análisis pendiente arranca en su propio hilo, hasta TOPE_AGENTES a la vez. Lo que pasa del tope espera su turno
+    """Cada análisis pendiente arranca en su propio hilo, hasta tope_agentes() a la vez. Lo que pasa del tope espera su turno
     y el panel le avisa al dev."""
     cola = _api("GET", "/api/v3/cola")
     if cola.get("error"):
         log(f"cola: {cola['error']}")
         return 0
+    _anotar_dev(cola.get("dev"))
     if cola.get("pendientes") or cola.get("en_proceso"):
         atento()
     hilos, espera = [], []
@@ -356,7 +1130,7 @@ def una_vuelta(esperar: bool = False) -> int:
         with _CORRIENDO_CANDADO:
             if fila in _CORRIENDO:
                 continue
-            if len(_CORRIENDO) >= TOPE_AGENTES:
+            if len(_CORRIENDO) >= tope_agentes():
                 espera.append(str(p.get("pr")))
                 continue
         previos = _fallos(fila, p.get("paquete_sha") or "")
@@ -371,7 +1145,7 @@ def una_vuelta(esperar: bool = False) -> int:
         hilo.start()
         hilos.append(hilo)
     if espera and espera != _EN_ESPERA:
-        log(f"{TOPE_AGENTES} análisis corriendo: esperan su turno {', '.join('#' + x for x in espera)}")
+        log(f"{tope_agentes()} análisis corriendo: esperan su turno {', '.join('#' + x for x in espera)}")
     _EN_ESPERA[:] = espera
     if esperar:
         for hilo in hilos:
@@ -487,7 +1261,7 @@ def poner_ajuste(clave: str, valor: str) -> None:
 # ── Jira (con tus propias credenciales) ──
 
 def _jira_cred() -> tuple:
-    correo = ajuste("jira_email") or os.environ.get("JIRA_EMAIL", "")
+    correo = ajuste("jira_email") or correo_dev() or os.environ.get("JIRA_EMAIL", "")
     token = ajuste("jira_token") or os.environ.get("JIRA_API_TOKEN", "")
     sitio = (ajuste("jira_site") or os.environ.get("JIRA_SITE", "") or "https://global66.atlassian.net").rstrip("/")
     return correo, token, sitio
@@ -595,21 +1369,16 @@ def tiempo_de(h: dict) -> dict:
 
 
 def leer_jira(claves: list) -> dict:
-    """Trae de Jira el estado de tus historias (las de tus PRs y las asignadas a ti sin terminar) y lo guarda local."""
-    asignado = CONFIG.get("jira_asignado") or "currentUser()"
-    asignado = asignado if asignado == "currentUser()" else f'"{asignado}"'
-    claves = sorted({c for c in claves if c})
-    jqls = [f"assignee = {asignado} AND statusCategory != Done ORDER BY updated DESC"]
-    if claves:
-        jqls.append(f"key in ({','.join(claves[:80])})")
+    """Trae de Jira solo las historias que salen de tus PRs; nunca las que tienes asignadas sin PR."""
+    import re
+    claves = sorted({c for c in claves if c and re.fullmatch(r"[A-Z][A-Z0-9]+-\d+", c)})
+    jqls = [f"key in ({','.join(claves[i:i + 80])})" for i in range(0, len(claves), 80)]
     vistas = {}
     for jql in jqls:
         try:
             datos = _jira("search/jql?" + urllib.parse.urlencode({"jql": jql, "maxResults": 100, "expand": "changelog",
                                                                    "fields": f"summary,status,assignee,updated,statuscategorychangedate,{CAMPO_PUNTOS}"}))
         except RuntimeError as err:
-            if "key in" in jql:
-                continue
             return {"error": str(err)}
         for it in datos.get("issues") or []:
             f = it.get("fields") or {}
@@ -619,9 +1388,10 @@ def leer_jira(claves: list) -> dict:
                                  "puntos": f.get(CAMPO_PUNTOS), "inicio": inicio, "fin": fin, "tramos": json.dumps(tramos),
                                  "categoria": (st.get("statusCategory") or {}).get("key", ""),
                                  "estado_desde": _desde(it.get("changelog"), st.get("name", ""), f.get("statuscategorychangedate") or ""),
-                                 "url": f"{_jira_cred()[2]}/browse/{it['key']}", "asignada": 1 if "assignee" in jql else 0}
+                                 "url": f"{_jira_cred()[2]}/browse/{it['key']}", "asignada": 0}
     ahora = time.time()
     with _DB_CANDADO, _db() as con:
+        con.execute("DELETE FROM historias WHERE asignada = 1")
         for v in vistas.values():
             con.execute("""INSERT INTO historias(clave, titulo, estado, categoria, estado_desde, url, asignada, leida, puntos, inicio, fin, tramos)
                            VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
@@ -632,6 +1402,14 @@ def leer_jira(claves: list) -> dict:
                          v["puntos"], v["inicio"], v["fin"], v["tramos"]))
     poner_ajuste("jira_leido", str(ahora))
     return {"ok": True, "historias": len(vistas)}
+
+
+def probar_jira() -> dict:
+    try:
+        yo = _jira("myself")
+    except (RuntimeError, urllib.error.URLError, OSError) as err:
+        return {"error": str(err)}
+    return {"ok": True, "nombre": yo.get("displayName", "")}
 
 
 def historias_locales() -> dict:
@@ -749,8 +1527,8 @@ def debatir(fila: int, mensaje: str) -> dict:
     if len(mensaje) < 3:
         return {"error": "escribe tu argumento"}
     with _DB_CANDADO, _db() as con:
-        s = con.execute("SELECT sesion, carpeta FROM sesiones WHERE fila = ?", (fila,)).fetchone()
-    if not s or not s["sesion"] or not Path(s["carpeta"]).is_dir():
+        s = con.execute("SELECT sesion, carpeta, pr FROM sesiones WHERE fila = ?", (fila,)).fetchone()
+    if not s or not Path(s["carpeta"]).is_dir():
         return {"error": "la sesión de esa revisión no está en esta máquina: vuelve a analizar el PR"}
     a = _analisis(fila)
     if not a:
@@ -762,7 +1540,13 @@ def debatir(fila: int, mensaje: str) -> dict:
                       + (" · YA RETIRADO" if h.get("_retirado") else "") + (" · IDOR" if h.get("_idor") else "")
                       for i, h in enumerate(hall)) or "(sin hallazgos)"
     _chat(fila, "debate", "dev", mensaje)
-    r = _claude(REGLAS_DEBATE.format(hallazgos=lista, mensaje=mensaje), Path(s["carpeta"]), ["Read", "Grep", "Glob"], reanudar=s["sesion"], espera=600)
+    previo = ""
+    if not s["sesion"]:
+        archivo = ANALISIS / f"pr{s['pr']}.md"
+        previo = ("Tu análisis de este PR (lo hiciste con otro motor; los archivos del paquete están en esta carpeta):\n"
+                  + (archivo.read_text(encoding="utf-8", errors="replace")[:60000] if archivo.exists() else "(no está en esta máquina)") + "\n\n")
+    r = _claude(previo + REGLAS_DEBATE.format(hallazgos=lista, mensaje=mensaje), Path(s["carpeta"]), ["Read", "Grep", "Glob"],
+                reanudar=s["sesion"] or "", espera=600)
     if r.get("error"):
         _chat(fila, "debate", "hodor", f"No pude responder: {r['error']}", {"error": True})
         return {"error": r["error"]}
@@ -784,18 +1568,51 @@ def debatir(fila: int, mensaje: str) -> dict:
 
 # ── Plan de pruebas en ci (PRs a release) ──
 
+CADA_COMPARTIDOS = 6 * 3600
+
+
+def traer_compartidos() -> dict:
+    if VISTA:
+        return {}
+    res = _api_nuevo("GET", "/api/v3/pruebas/compartidas")
+    if not res.get("disponible") or not isinstance(res.get("usuarios"), list):
+        return {}
+    try:
+        r = pruebas_dev.sincronizar_compartidos(res)
+    except Exception as err:  # noqa: BLE001
+        log(f"usuarios precargados: {str(err)[:200]}")
+        return {}
+    if r.get("cambios"):
+        log(f"usuarios precargados por el revisor: {r.get('usuarios', 0)}")
+    return r
+
+
+def estado_repos() -> dict:
+    if not CONFIG.get("repos"):
+        return {"ok": False, "error": "", "config_properties": False, "ai_context": False}
+    base = Path(str(CONFIG["repos"])).expanduser()
+    _cp, error_cp = pruebas_dev.config_properties(base)
+    _ai, error_ai = pruebas_dev.ai_context(base)
+    return {"ok": not (error_cp or error_ai), "error": " · ".join(e for e in (error_cp, error_ai) if e),
+            "config_properties": not error_cp, "ai_context": not error_ai}
+
+
 def config_pruebas() -> dict:
     us = pruebas_dev.usuarios()
     empresas = {u.get("company_id") for u in us if u.get("company_id")}
+    bo = pruebas_dev.estado_bo()
     return {"bd": bool(pruebas_dev.ajuste("bd_probado")), "bd_host": pruebas_dev.ajuste("bd_host"), "bd_usuario": pruebas_dev.ajuste("bd_usuario"),
             "bd_puerto": pruebas_dev.ajuste("bd_puerto", "3306"), "usuarios": us, "empresas": len(empresas),
-            "bo": bool(pruebas_dev.ajuste("bo_probado"))}
+            "compartidos": any(u.get("compartido") for u in us), "compartidos_en": float(pruebas_dev.ajuste("compartidos_en", "0") or 0),
+            "bo": bo["listo"] or bool(pruebas_dev.ajuste("bo_probado")), "bo_config": bo["listo"], "bo_error": bo["error"],
+            "bo_leyendo": bo["leyendo"],
+            "repos_ok": estado_repos()}
 
 
 def falta_config() -> str:
     c = config_pruebas()
     faltan = [x for x, ok in (("tu usuario de la BD de ci", c["bd"]), ("usuarios de prueba de dos empresas", c["empresas"] >= 2),
-                              ("tus llaves de backoffice de ci", c["bo"])) if not ok]
+                              ("las llaves de backoffice de ci (ms-config-properties)", c["bo"])) if not ok]
     return ("Falta configurar: " + ", ".join(faltan)) if faltan else ""
 
 
@@ -980,7 +1797,8 @@ def rescatar_planes() -> None:
 # ── Panel local ──
 
 ACCIONES_REMOTAS = ("/api/pedir", "/api/enviar", "/api/sugerencia", "/api/terminal", "/api/debate", "/api/plan/chat", "/api/plan/otra-vez",
-                    "/api/config/bd", "/api/config/usuario", "/api/config/usuario/borrar", "/api/config/bo")
+                    "/api/config/bd", "/api/config/usuario", "/api/config/usuario/borrar", "/api/config/bo", "/api/config/bo/leer",
+                    "/api/reglas/skill", "/api/modelos", "/api/proveedor/probar", "/api/ayuda")
 
 
 def _guardar_config(cambios: dict) -> None:
@@ -1067,18 +1885,31 @@ def abrir_terminal(pr: str, repo: str, rama: str) -> dict:
 
 def estado_panel() -> dict:
     correo, token, _sitio = _jira_cred()
-    return {"version": VERSION, "vista": VISTA, "repos": CONFIG.get("repos") or "", "jira": bool(correo and token),
-            "jira_email": correo, "jira_leido": float(ajuste("jira_leido", "0") or 0), "configurado": ajuste("configurado") == "1" or VISTA,
+    return {"version": VERSION, "vista": VISTA, "ver_como": VER_COMO["correo"], "ver_como_nombre": VER_COMO["nombre"],
+            "repos": CONFIG.get("repos") or "", "jira": bool(correo and token),
+            "jira_email": correo, "dev_correo": ajuste("dev_correo"), "jira_leido": float(ajuste("jira_leido", "0") or 0), "configurado": ajuste("configurado") == "1" or VISTA,
             "pruebas": {k: v for k, v in config_pruebas().items()}, "falta_pruebas": falta_config()}
 
 
-def datos_panel() -> dict:
-    mis = _api("GET", "/api/v3/mis")
-    if mis.get("error"):
-        return {"error": mis["error"]}
-    det = _api("GET", "/api/v3/detectados")
-    todos = _api("GET", "/api/v3/historias")
-    por_aprobar = _api("GET", "/api/v3/por-aprobar")
+PARTES_DATOS = {"mis": "/api/v3/mis", "detectados": "/api/v3/detectados", "historias": "/api/v3/historias", "apr": "/api/v3/por-aprobar"}
+
+
+def _pedir_parte(ruta: str, como: bool = False) -> dict:
+    try:
+        return _api("GET", ruta, como=como)
+    except (urllib.error.URLError, OSError) as err:
+        return {"error": f"no pude hablar con Hodor: {str(err)[:120]}"}
+
+
+def datos_panel(partes: list | None = None) -> dict:
+    from concurrent.futures import ThreadPoolExecutor
+    pedidas = [x for x in (partes or PARTES_DATOS) if x in PARTES_DATOS] or list(PARTES_DATOS)
+    with ThreadPoolExecutor(max_workers=len(pedidas)) as hilos:
+        res = dict(zip(pedidas, hilos.map(lambda x: _pedir_parte(PARTES_DATOS[x], como=True), pedidas)))
+    mis, det, todos, por_aprobar = (res.get(x) or {} for x in ("mis", "detectados", "historias", "apr"))
+    primera = next(iter(res.values()))
+    if (mis or primera).get("error"):
+        return {"error": (mis or primera)["error"]}
     with _DB_CANDADO, _db() as con:
         ocultos = {r["pr"]: r["tipo"] for r in con.execute("SELECT pr, tipo FROM ocultos")}
         sugerencias = [dict(r) for r in con.execute("SELECT * FROM sugerencias ORDER BY id DESC LIMIT 50")]
@@ -1096,11 +1927,142 @@ def datos_panel() -> dict:
     with _DB_CANDADO, _db() as con:
         planes = {r["fila"]: {"estado": r["estado"], "error": r["error"], "enviado": r["enviado"]} for r in con.execute("SELECT fila, estado, error, enviado FROM planes")}
         sesiones = [r["fila"] for r in con.execute("SELECT fila FROM sesiones")]
-    return {"dev": mis.get("dev"), "analisis": mis.get("analisis") or [], "pedidos": mis.get("pedidos") or [],
-            "agentes": {"corriendo": sorted(_CORRIENDO.values()), "tope": TOPE_AGENTES, "en_espera": list(_EN_ESPERA)},
-            "detectados": det.get("detectados") or [], "prs": todos.get("prs") or [], "ocultos": ocultos, "historias": historias, "sugerencias": sugerencias,
-            "locales": locales, "planes": planes, "sesiones": sesiones, "estado": estado_panel(),
-            "por_aprobar": por_aprobar if por_aprobar.get("aprobador") else {"aprobador": False, "prs": []}}
+    salida = {"agentes": {"corriendo": sorted(_CORRIENDO.values()), "tope": tope_agentes(), "en_espera": list(_EN_ESPERA)},
+              "ocultos": ocultos, "historias": historias, "sugerencias": sugerencias,
+              "locales": locales, "planes": planes, "sesiones": sesiones, "estado": estado_panel()}
+    if VER_COMO["correo"]:
+        salida.update({"agentes": {"corriendo": [], "tope": tope_agentes(), "en_espera": []}, "ocultos": {}, "sugerencias": [],
+                       "locales": [], "planes": {}, "sesiones": []})
+    if "mis" in res:
+        salida.update({"dev": mis.get("dev"), "analisis": mis.get("analisis") or [], "pedidos": mis.get("pedidos") or [], "rechazados": mis.get("rechazados") or []})
+    if "detectados" in res:
+        salida["detectados"] = det.get("detectados") or []
+    if "historias" in res:
+        salida["prs"] = todos.get("prs") or []
+    if "apr" in res:
+        salida["por_aprobar"] = por_aprobar if por_aprobar.get("aprobador") else {"aprobador": False, "prs": []}
+    return salida
+
+
+TIPOS_AYUDA = ("no_analiza", "analisis_mal", "trabado", "otro")
+LINEAS_LOG_AYUDA = 80
+_SECRETO_CLAVE = re.compile(
+    r"(?i)\b(authorization|bearer|x-panel|token|access[_-]?token|api[_-]?key|apikey|secret|secreto|password|passwd|pwd|"
+    r"contrase(?:ñ|n)a|clave|ktk|admin[_-]?token|known[_-]?token[_-]?key)(\"?\s*[:=]\s*\"?)([^\s\"',;&]+)")
+_SECRETO_ESQUEMA = re.compile(r"(?i)\b(bearer|basic)(\s+)[A-Za-z0-9._~+/=-]{8,}")
+_SECRETO_URL = re.compile(r"(?i)(://)[^/\s:@]+:[^/\s@]+@")
+_SECRETO_LARGO = re.compile(r"(?<![\w/.-])(?:AKIA[0-9A-Z]{16}|eyJ[\w-]+\.[\w-]+\.[\w-]*|[A-Za-z0-9_+/=-]{32,})(?![\w/.-])")
+
+
+def sin_secretos(texto: str) -> str:
+    texto = str(texto or "")
+    for crudo in (TOKEN, CLAVE_PANEL):
+        if crudo:
+            texto = texto.replace(crudo, "[oculto]")
+    texto = _SECRETO_CLAVE.sub(lambda m: f"{m.group(1)}{m.group(2)}[oculto]", texto)
+    texto = _SECRETO_ESQUEMA.sub(lambda m: f"{m.group(1)}{m.group(2)}[oculto]", texto)
+    texto = _SECRETO_URL.sub(r"\1[oculto]@", texto)
+    return _SECRETO_LARGO.sub(lambda m: m.group(0) if re.fullmatch(r"[0-9a-f]+", m.group(0)) else "[oculto]", texto)
+
+
+def log_ayuda(n: int = LINEAS_LOG_AYUDA) -> list:
+    if not LOG.exists():
+        return []
+    try:
+        with LOG.open("rb") as f:
+            f.seek(0, os.SEEK_END)
+            f.seek(max(0, f.tell() - 64_000))
+            lineas = f.read().decode("utf-8", "replace").splitlines()[-n:]
+    except OSError:
+        return []
+    return [sin_secretos(x)[:600] for x in lineas]
+
+
+def _de_historia(x: dict, historia: str) -> bool:
+    return (str(x.get("historia") or "") or "Sin historia") == historia
+
+
+def contexto_ayuda(historia: str) -> dict:
+    import platform
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=3) as hilos:
+        mis, det, todos = hilos.map(lambda r: _pedir_parte(r), ("/api/v3/mis", "/api/v3/detectados", "/api/v3/historias"))
+    analisis = {}
+    for a in mis.get("analisis") or []:
+        analisis.setdefault(str(a.get("pr")), a)
+    detectados = {str(d.get("pr")): d for d in det.get("detectados") or []}
+    prs = {}
+    for p in todos.get("prs") or []:
+        if _de_historia(p, historia) or _de_historia(analisis.get(str(p.get("pr"))) or {}, historia):
+            prs[str(p.get("pr"))] = dict(p)
+    for k, a in analisis.items():
+        if k not in prs and _de_historia(a, historia):
+            prs[k] = {"pr": k, "repo": a.get("repo"), "destino": a.get("destino"), "url": a.get("url"), "estado": "abierto",
+                      "mergeado": bool(a.get("mergeado"))}
+    pol, eleg = politica_hodor(), elegidos()
+    salida = []
+    for k, p in sorted(prs.items()):
+        a, d = analisis.get(k), detectados.get(k) or {}
+        datos_ = (a or {}).get("datos") or {}
+        proveedor, modelo = motor_para({"repo": p.get("repo")}, pol, eleg)
+        salida.append({
+            "repo": p.get("repo"), "pr": k, "destino": p.get("destino"), "estado": p.get("estado"), "url": p.get("url"),
+            "aprobado_por": p.get("aprobado_por") or "", "mergeado": bool(p.get("mergeado")),
+            "motor": {"proveedor": proveedor, "modelo": modelo},
+            "analisis": {"id": a.get("id"), "codigo": f"REV/{a.get('id')}", "estado": a.get("estado"), "accion": a.get("accion"),
+                         "motivo": a.get("motivo"), "puntaje": datos_.get("puntaje"), "entregado": bool(a.get("entregado")),
+                         "analizado_en": a.get("analizado_en"), "commit": a.get("commit")} if a else None,
+            "puertas": d.get("puertas") or [], "listo": d.get("listo"), "porque": d.get("porque"), "qg": d.get("qg") or ""})
+    numeros = {x["pr"] for x in salida}
+    pedidos = [{"pr": q.get("pr"), "en": q.get("en"), "resultado": q.get("resultado")} for q in mis.get("pedidos") or []
+               if q.get("resultado") and any(n and n in str(q.get("pr") or "") for n in numeros)]
+    pr = config_pruebas()
+    jira_correo, jira_token, _sitio = _jira_cred()
+    errores = {k: v.get("error") for k, v in (("mis", mis), ("detectados", det), ("historias", todos)) if v.get("error")}
+    return {"historia": historia, "prs": salida, "pedidos": pedidos, "version": VERSION, "reglas_sha": ajuste("reglas_sha", ""),
+            "so": f"{platform.system()} {platform.release()} ({platform.machine()})", "python": platform.python_version(),
+            "config": {"jira": bool(jira_correo and jira_token), "bd": bool(pr.get("bd")), "usuarios": len(pr.get("usuarios") or []),
+                       "usuarios_compartidos": bool(pr.get("compartidos")), "bo": bool(pr.get("bo")), "repos": bool((pr.get("repos_ok") or {}).get("ok")),
+                       "configurado": ajuste("configurado") == "1"},
+            "agentes": {"corriendo": len(_CORRIENDO), "tope": tope_agentes()},
+            "hodor": {"ultima_respuesta": int(_HODOR["respuesta"]) or None, "ultimo_fallo": int(_HODOR["fallo"]) or None,
+                      **({"errores": errores} if errores else {})},
+            "log": log_ayuda()}
+
+
+def pedir_ayuda(cuerpo: dict) -> dict:
+    historia = str(cuerpo.get("historia") or "").strip()[:80]
+    tipo = str(cuerpo.get("tipo") or "otro")
+    tipo = tipo if tipo in TIPOS_AYUDA else "otro"
+    texto = str(cuerpo.get("texto") or "").strip()[:4000]
+    if not historia:
+        return {"error": "Falta la historia."}
+    if tipo == "otro" and len(texto) < 3:
+        return {"error": "Escribe qué pasa para que el revisor lo entienda."}
+    contexto = contexto_ayuda(historia)
+    try:
+        res = _api("POST", "/api/v3/ayuda", {"historia": historia, "tipo": tipo, "texto": texto, "avisar": cuerpo.get("avisar") is not False,
+                                             "contexto": contexto})
+    except (urllib.error.URLError, OSError) as err:
+        return {"error": f"No pude hablar con Hodor: {str(err)[:120]}"}
+    if res.get("status") == 404:
+        return {"error": "Hodor todavía no recibe pedidos de ayuda: escríbele al revisor por Slack."}
+    if not res.get("error"):
+        with _CACHE_CANDADO:
+            _CACHE.pop("ayuda", None)
+        log(f"ayuda: {res.get('codigo')} sobre {historia} ({tipo})")
+    return res
+
+
+def casos_ayuda() -> dict:
+    como = VER_COMO["correo"]
+    if not como:
+        return _en_cache("ayuda", 60, lambda: _api_nuevo("GET", "/api/v3/ayuda"))
+    try:
+        res = _api("GET", "/api/v3/ayuda", como=True)
+    except (urllib.error.URLError, OSError, ValueError):
+        return {"disponible": False}
+    return {**res, "disponible": True} if isinstance(res, dict) and not res.get("error") else {"disponible": False}
 
 
 class Panel(BaseHTTPRequestHandler):
@@ -1120,7 +2082,7 @@ class Panel(BaseHTTPRequestHandler):
         return host in ("127.0.0.1", "localhost") and self.headers.get("X-Panel") == CLAVE_PANEL
 
     def do_GET(self):  # noqa: N802
-        if self.path in ("/", "/index.html"):
+        if self.path.split("?", 1)[0] in ("/", "/index.html", "/mis-prs", "/por-aprobar", "/reglas", "/sugerencias", "/ajustes"):
             html = (AQUI / "panel.html").read_text(encoding="utf-8").replace("__CLAVE__", CLAVE_PANEL).replace("__VERSION__", VERSION)
             crudo = html.encode("utf-8")
             self.send_response(200)
@@ -1131,8 +2093,10 @@ class Panel(BaseHTTPRequestHandler):
             return
         if not self._propio():
             return self._json(403, {"error": "solo desde el panel"})
-        if self.path == "/api/datos":
-            return self._json(200, datos_panel())
+        if self.path.split("?", 1)[0] == "/api/datos":
+            consulta = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+            partes = [x for v in consulta.get("partes", []) for x in v.split(",") if x]
+            return self._json(200, datos_panel(partes or None))
         if self.path == "/api/estado":
             return self._json(200, estado_panel())
         if self.path.startswith("/api/plan/"):
@@ -1143,11 +2107,30 @@ class Panel(BaseHTTPRequestHandler):
             return self._json(200, {"chat": chat_de(fila, "debate")})
         if self.path.startswith("/api/analisis-par/"):
             fila = self.path.rsplit("/", 1)[-1]
-            return self._json(200, _api("GET", f"/api/v3/analisis?id={urllib.parse.quote(fila)}"))
+            return self._json(200, _api("GET", f"/api/v3/analisis?id={urllib.parse.quote(fila)}", como=True))
+        if self.path == "/api/conexion":
+            return self._json(200, conexion())
+        if self.path == "/api/admin/devs":
+            return self._json(200, admin_devs())
+        if self.path.startswith("/api/historial/"):
+            return self._json(200, historial(self.path.rsplit("/", 1)[-1]))
+        if self.path == "/api/reglas":
+            return self._json(200, reglas_panel())
+        if self.path == "/api/reglas/claude-md":
+            return self._json(200, texto_claude_md())
+        if self.path == "/api/reglas/exportar":
+            return self._json(200, texto_exportar())
+        if self.path == "/api/modelos":
+            return self._json(200, modelos_panel())
+        if self.path == "/api/ayuda":
+            return self._json(200, casos_ayuda())
+        if self.path.startswith("/api/ayuda/contexto"):
+            historia = (urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("historia") or [""])[0].strip()[:80]
+            return self._json(200, contexto_ayuda(historia) if historia else {"error": "Falta la historia."})
         if self.path.startswith("/api/analisis/"):
             pr = self.path.rsplit("/", 1)[-1]
             archivo = ANALISIS / f"pr{pr}.md"
-            return self._json(200, {"texto": archivo.read_text(encoding="utf-8") if archivo.exists() else ""})
+            return self._json(200, {"texto": archivo.read_text(encoding="utf-8") if archivo.exists() and not VER_COMO["correo"] else ""})
         return self._json(404, {"error": "no existe"})
 
     def do_POST(self):  # noqa: N802
@@ -1160,6 +2143,10 @@ class Panel(BaseHTTPRequestHandler):
             cuerpo = {}
         if VISTA and self.path in ACCIONES_REMOTAS:
             return self._json(200, {"error": "vista previa: esta acción está desactivada (no actúa en nombre del dev)"})
+        if self.path == "/api/ver-como":
+            return self._json(200, poner_ver_como(str(cuerpo.get("correo") or "")))
+        if VER_COMO["correo"] and (self.path in ACCIONES_REMOTAS or self.path == "/api/ocultar"):
+            return self._json(200, {"error": f"Estás viendo como {VER_COMO['nombre'] or VER_COMO['correo']}: solo lectura"})
         if self.path == "/api/pedir":
             atento()
             return self._json(200, _api("POST", "/api/v3/pedir", {"url": cuerpo.get("url", "")}))
@@ -1177,6 +2164,8 @@ class Panel(BaseHTTPRequestHandler):
                 else:
                     con.execute("DELETE FROM ocultos WHERE pr = ?", (str(cuerpo.get("pr")),))
             return self._json(200, {"ok": True})
+        if self.path == "/api/ayuda":
+            return self._json(200, pedir_ayuda(cuerpo))
         if self.path == "/api/sugerencia":
             texto, tipo = str(cuerpo.get("texto") or "").strip(), str(cuerpo.get("tipo") or "idea")
             res = _api("POST", "/api/v3/sugerencia", {"texto": texto, "tipo": tipo})
@@ -1188,12 +2177,21 @@ class Panel(BaseHTTPRequestHandler):
                 carpeta = Path(str(cuerpo.get("repos") or "")).expanduser()
                 if not carpeta.is_dir():
                     return self._json(200, {"error": f"{carpeta} no es una carpeta"})
+                _cp, error_cp = pruebas_dev.config_properties(carpeta)
+                if error_cp:
+                    return self._json(200, {"error": f"{error_cp} ({carpeta / pruebas_dev.CONFIG_PROPERTIES})"})
+                _ai, error_ai = pruebas_dev.ai_context(carpeta)
+                if error_ai:
+                    return self._json(200, {"error": f"{error_ai} ({carpeta / pruebas_dev.AI_CONTEXT})"})
                 _guardar_config({"repos": str(carpeta)})
+                os.environ["HODOR_V3_REPOS"] = str(carpeta)
+                threading.Thread(target=pruebas_dev.refrescar_bo, kwargs={"forzar": True}, daemon=True).start()
+                threading.Thread(target=ai_context_y_skill, daemon=True).start()
             for clave in ("jira_email", "jira_token", "jira_site"):
                 if cuerpo.get(clave):
                     poner_ajuste(clave, str(cuerpo[clave]).strip())
             if cuerpo.get("jira_email") or cuerpo.get("jira_token"):
-                prueba = leer_jira([])
+                prueba = probar_jira()
                 if prueba.get("error"):
                     return self._json(200, {"error": prueba["error"]})
             if cuerpo.get("terminar"):
@@ -1209,12 +2207,24 @@ class Panel(BaseHTTPRequestHandler):
             return self._json(200, pruebas_dev.guardar_bd(str(cuerpo.get("host") or ""), str(cuerpo.get("puerto") or "3306"),
                                                            str(cuerpo.get("usuario") or ""), str(cuerpo.get("password") or "")))
         if self.path == "/api/config/usuario":
-            return self._json(200, pruebas_dev.guardar_usuario(str(cuerpo.get("email") or ""), str(cuerpo.get("password") or ""), str(cuerpo.get("id") or ""),
-                                                                str(cuerpo.get("otp") or "")))
+            return self._json(200, pruebas_dev.guardar_usuario(str(cuerpo.get("email") or ""), str(cuerpo.get("password") or ""), str(cuerpo.get("id") or "")))
         if self.path == "/api/config/usuario/borrar":
             return self._json(200, pruebas_dev.borrar_usuario(str(cuerpo.get("id") or "")))
+        if self.path == "/api/config/bo/leer":
+            return self._json(200, pruebas_dev.refrescar_bo(forzar=True))
         if self.path == "/api/config/bo":
             return self._json(200, pruebas_dev.guardar_bo(str(cuerpo.get("ktk") or ""), str(cuerpo.get("at") or "")))
+        if self.path == "/api/reglas/skill":
+            return self._json(200, pedir_skill(cuerpo))
+        if self.path == "/api/modelos":
+            return self._json(200, elegir_modelo(str(cuerpo.get("repo") or ""), str(cuerpo.get("proveedor") or ""), str(cuerpo.get("modelo") or "")))
+        if self.path == "/api/proveedor/probar":
+            proveedor = str(cuerpo.get("proveedor") or "")
+            resultado = probar(proveedor)
+            if proveedor in PROVEEDORES:
+                with _CACHE_CANDADO:
+                    _CACHE[f"probar:{proveedor}"] = (time.time(), resultado)
+            return self._json(200, resultado)
         if self.path == "/api/jira":
             try:
                 return self._json(200, leer_jira(list(historias_locales())))
@@ -1266,7 +2276,10 @@ def main() -> int:
     log(f"{VERSION} arrancó · {API}")
     rescatar_planes()
     actualizar()
+    threading.Thread(target=ai_context_y_skill, daemon=True).start()
     revisado = time.time()
+    threading.Thread(target=traer_compartidos, daemon=True).start()
+    compartidos = time.time()
     atento(2 * 60)
     while True:
         try:
@@ -1280,6 +2293,10 @@ def main() -> int:
         if time.time() - revisado > CADA_ACTUALIZAR:
             revisado = time.time()
             actualizar()
+            threading.Thread(target=ai_context_y_skill, daemon=True).start()
+        if time.time() - compartidos > CADA_COMPARTIDOS:
+            compartidos = time.time()
+            threading.Thread(target=traer_compartidos, daemon=True).start()
         time.sleep(15)
 
 

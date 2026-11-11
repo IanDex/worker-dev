@@ -13,6 +13,7 @@ Lo usa el worker (revisor_dev.py) y, como herramientas, el Claude que arma y dic
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import re
@@ -43,6 +44,7 @@ SQL_FILAS, SQL_TOPE, SQL_MS = 50, 200, 5000
 SERVICIO = "hodor-v3"
 _CANDADO = threading.Lock()
 _TOKENS: dict = {}
+_MIGRADO: list = []
 
 
 # ── Base local y secretos ──
@@ -60,6 +62,10 @@ def _db() -> sqlite3.Connection:
                                            estado TEXT, plan TEXT, ejecucion TEXT, dictamen TEXT, chat TEXT, sesion TEXT,
                                            error TEXT, creado REAL, actualizado REAL, enviado INTEGER DEFAULT 0);
     """)
+    if not _MIGRADO:
+        if "compartido" not in {f[1] for f in con.execute("PRAGMA table_info(usuarios_prueba)")}:
+            con.execute("ALTER TABLE usuarios_prueba ADD COLUMN compartido INTEGER DEFAULT 0")
+        _MIGRADO.append(True)
     return con
 
 
@@ -174,8 +180,11 @@ def _jwt(token: str) -> dict:
 
 # ── Usuarios de prueba ──
 
-def login(email: str, password: str, otp: str = "") -> dict:
-    res = _pedir("POST", GATEWAY + RUTA_LOGIN, {"content-type": "application/json", "authtype": "WHATSAPP", "authvalue": otp,
+OTP_CI = "123456"
+
+
+def login(email: str, password: str) -> dict:
+    res = _pedir("POST", GATEWAY + RUTA_LOGIN, {"content-type": "application/json", "authtype": "SMS", "authvalue": OTP_CI,
                                                "device": "desktop", "platform": "mobile", "fingerprint": "hodor-v3", "origin": ORIGEN_B2B},
                  json.dumps({"email": email, "password": password, "useOtp": True}).encode())
     if res.get("status") == 200:
@@ -185,7 +194,7 @@ def login(email: str, password: str, otp: str = "") -> dict:
             token = ""
         if token:
             return {"status": 200, "token": token}
-        return {"status": 200, "error": "entró pero pide el código OTP: agrégalo al usuario"}
+        return {"status": 200, "error": "entró pero no devolvió el token de sesión"}
     return {"status": res.get("status"), "error": (res.get("cuerpo") or res.get("error") or "")[:300]}
 
 
@@ -204,27 +213,30 @@ def kyc(token: str) -> dict:
 
 def usuarios() -> list:
     with _CANDADO, _db() as con:
-        return [dict(r) for r in con.execute("SELECT id, email, alias, empresa, company_id, nivel, pais, probado, error FROM usuarios_prueba ORDER BY id")]
+        filas = [dict(r) for r in con.execute("SELECT id, email, alias, empresa, company_id, nivel, pais, probado, error, compartido FROM usuarios_prueba "
+                                                 "ORDER BY compartido DESC, id")]
+    for u in filas:
+        u["compartido"] = bool(u.get("compartido"))
+    return filas
 
 
-def guardar_usuario(email: str, password: str, uid: str = "", otp: str = "") -> dict:
+def guardar_usuario(email: str, password: str, uid: str = "") -> dict:
     """Prueba el login y, si entra, guarda al usuario con su empresa; la contraseña va al llavero."""
     email = email.strip().lower()
     if "@" not in email:
         return {"error": "falta el correo"}
     actual = next((u for u in usuarios() if u["id"] == uid or u["email"] == email), None)
+    if actual and actual.get("compartido"):
+        return {"error": "ese usuario ya viene precargado por el revisor"}
     uid = (actual or {}).get("id") or f"u{int(time.time() * 1000):x}"
     password = password or (leer_secreto(f"usuario:{uid}") if actual else "")
     if not password:
         return {"error": "falta la contraseña"}
-    otp = otp.strip() or (leer_secreto(f"otp:{uid}") if actual else "")
-    r = login(email, password, otp)
+    r = login(email, password)
     if r.get("status") != 200 or not r.get("token"):
         return {"error": r.get("error") if r.get("status") == 200 else f"no entra en ci ({r.get('status') or r.get('error')}): revisa correo, contraseña y VPN"}
     k = kyc(r["token"])
     guardar_secreto(f"usuario:{uid}", password)
-    if otp:
-        guardar_secreto(f"otp:{uid}", otp)
     alias = " · ".join(x for x in (k.get("empresa"), k.get("nombre") or email.split("@")[0]) if x)
     with _CANDADO, _db() as con:
         con.execute("""INSERT INTO usuarios_prueba(id, email, alias, empresa, company_id, nivel, pais, kyc, probado, error)
@@ -238,6 +250,8 @@ def guardar_usuario(email: str, password: str, uid: str = "", otp: str = "") -> 
 
 
 def borrar_usuario(uid: str) -> dict:
+    if any(u["id"] == uid and u.get("compartido") for u in usuarios()):
+        return {"error": "los usuarios precargados por el revisor no se pueden borrar"}
     borrar_secreto(f"usuario:{uid}")
     borrar_secreto(f"otp:{uid}")
     with _CANDADO, _db() as con:
@@ -253,7 +267,7 @@ def _token(uid: str) -> str:
     u = next((x for x in usuarios() if x["id"] == uid), None)
     if not u:
         raise ValueError(f"no existe el usuario de prueba {uid}")
-    r = login(u["email"], leer_secreto(f"usuario:{uid}"), leer_secreto(f"otp:{uid}"))
+    r = login(u["email"], leer_secreto(f"usuario:{uid}"))
     if r.get("status") != 200 or not r.get("token"):
         with _CANDADO, _db() as con:
             con.execute("UPDATE usuarios_prueba SET error = ? WHERE id = ?", (f"login {r.get('status')}", uid))
@@ -272,17 +286,205 @@ def guardar_bo(ktk: str, at: str) -> dict:
     return probar_bo()
 
 
+CONFIG_PROPERTIES = "ms-config-properties"
+AI_CONTEXT = "ai-context"
+CLONAR_AI_CONTEXT = "git clone https://git-codecommit.us-east-1.amazonaws.com/v1/repos/ai-context"
+ARCHIVO_BO = "company.yml"
+CLAVES_BO = {"KNOWN-TOKEN-KEY": "com.global.company.flash-token-key", "ADMIN-TOKEN-KEY": "com.global.company.admin-token"}
+CADA_BO = 6 * 3600
+_BO: dict = {"en": 0.0, "llaves": {}, "error": ""}
+
+
+def carpeta_repos() -> Path:
+    return Path(os.environ.get("HODOR_V3_REPOS") or ajuste("repos") or (Path.home() / "Documents")).expanduser()
+
+
+def config_properties(base: Path | None = None) -> tuple:
+    base = base or carpeta_repos()
+    carpeta = base / CONFIG_PROPERTIES
+    if not (carpeta / ".git").exists():
+        return None, "Falta ms-config-properties en tu carpeta de microservicios: clónalo ahí"
+    try:
+        r = subprocess.run(["git", "-C", str(carpeta), "remote", "get-url", "origin"], capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return None, "no pude correr git en ms-config-properties"
+    if r.returncode != 0 or not r.stdout.strip():
+        return None, "ms-config-properties no tiene el remoto origin: clónalo de nuevo en tu carpeta de microservicios"
+    return carpeta, ""
+
+
+def ai_context(base: Path | None = None) -> tuple:
+    base = base or carpeta_repos()
+    carpeta = base / AI_CONTEXT
+    if not (carpeta / ".git").exists():
+        return None, f"Falta ai-context en tu carpeta de microservicios: clónalo ahí ({CLONAR_AI_CONTEXT})"
+    try:
+        r = subprocess.run(["git", "-C", str(carpeta), "remote", "get-url", "origin"], capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return None, "no pude correr git en ai-context"
+    if r.returncode != 0 or not r.stdout.strip():
+        return None, f"ai-context no tiene el remoto origin: clónalo de nuevo en tu carpeta de microservicios ({CLONAR_AI_CONTEXT})"
+    return carpeta, ""
+
+
+def _yaml_simple(texto: str) -> dict:
+    raiz: dict = {}
+    pila = [(-1, raiz)]
+    for linea in texto.splitlines():
+        if not linea.strip() or linea.lstrip().startswith("#") or linea.lstrip().startswith("-") or ":" not in linea:
+            continue
+        sangria = len(linea) - len(linea.lstrip(" "))
+        clave, _, valor = linea.strip().partition(":")
+        valor = valor.split(" #", 1)[0].strip().strip("'\"")
+        while pila and pila[-1][0] >= sangria:
+            pila.pop()
+        padre = pila[-1][1] if pila else raiz
+        if valor:
+            padre[clave.strip()] = valor
+        else:
+            hijo: dict = {}
+            padre[clave.strip()] = hijo
+            pila.append((sangria, hijo))
+    return raiz
+
+
+def _buscar(datos, ruta: str):
+    if not isinstance(datos, dict):
+        return None
+    if ruta in datos and not isinstance(datos[ruta], dict):
+        return datos[ruta]
+    partes = ruta.split(".")
+    for i in range(1, len(partes)):
+        cabeza = ".".join(partes[:i])
+        if cabeza in datos:
+            hallado = _buscar(datos[cabeza], ".".join(partes[i:]))
+            if hallado is not None:
+                return hallado
+    return None
+
+
+def leer_bo_config(base: Path | None = None, traer: bool = False) -> tuple:
+    carpeta, error = config_properties(base)
+    if error:
+        return {}, error
+    marca = carpeta / ".git" / "FETCH_HEAD"
+    if traer or not marca.exists() or time.time() - marca.stat().st_mtime > CADA_BO:
+        try:
+            subprocess.run(["git", "-C", str(carpeta), "fetch", "--quiet", "origin", "master"], capture_output=True, timeout=60)
+        except (OSError, subprocess.SubprocessError):
+            pass
+    try:
+        r = subprocess.run(["git", "-C", str(carpeta), "show", f"origin/master:{ARCHIVO_BO}"], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return {}, "no pude leer ms-config-properties con git"
+    if r.returncode != 0 or not r.stdout.strip():
+        return {}, f"no encontré {ARCHIVO_BO} en master de ms-config-properties: haz git fetch con la VPN prendida"
+    try:
+        import yaml
+        datos = yaml.safe_load(r.stdout) or {}
+    except Exception:  # noqa: BLE001
+        datos = _yaml_simple(r.stdout)
+    llaves = {cabecera: str(_buscar(datos, ruta) or "").strip() for cabecera, ruta in CLAVES_BO.items()}
+    if not all(llaves.values()):
+        return {}, f"{ARCHIVO_BO} de ms-config-properties (master) no trae flash-token-key y admin-token"
+    return llaves, ""
+
+
+def refrescar_bo(forzar: bool = False) -> dict:
+    with _CANDADO:
+        vigente = time.time() - _BO["en"] < CADA_BO
+    if forzar or not vigente:
+        llaves, error = leer_bo_config(traer=forzar)
+        with _CANDADO:
+            _BO.update({"en": time.time(), "llaves": llaves, "error": error})
+    with _CANDADO:
+        return {"listo": bool(_BO["llaves"]), "error": _BO["error"], "en": _BO["en"]}
+
+
+def estado_bo() -> dict:
+    with _CANDADO:
+        vencido = time.time() - _BO["en"] >= CADA_BO and not _BO.get("leyendo")
+        if vencido:
+            _BO["leyendo"] = True
+    if vencido:
+        def leer():
+            try:
+                refrescar_bo(forzar=True)
+            finally:
+                _BO["leyendo"] = False
+        threading.Thread(target=leer, daemon=True).start()
+    with _CANDADO:
+        return {"listo": bool(_BO["llaves"]), "error": _BO["error"], "en": _BO["en"], "leyendo": bool(_BO.get("leyendo"))}
+
+
+def _propias() -> dict:
+    if hay_secreto("bo:ktk") and hay_secreto("bo:at"):
+        return {"KNOWN-TOKEN-KEY": leer_secreto("bo:ktk"), "ADMIN-TOKEN-KEY": leer_secreto("bo:at")}
+    return {}
+
+
+def llaves_bo() -> dict:
+    refrescar_bo()
+    with _CANDADO:
+        llaves = dict(_BO["llaves"])
+    return llaves or _propias()
+
+
+def hay_bo() -> bool:
+    return bool(llaves_bo())
+
+
 def probar_bo() -> dict:
-    if not (hay_secreto("bo:ktk") and hay_secreto("bo:at")):
+    if not hay_bo():
         return {"error": "faltan las dos llaves"}
-    res = _pedir("GET", LB + RUTA_PRUEBA_BO, {"accept": "application/json", "KNOWN-TOKEN-KEY": leer_secreto("bo:ktk"),
-                                              "ADMIN-TOKEN-KEY": leer_secreto("bo:at")}, None)
+    res = _pedir("GET", LB + RUTA_PRUEBA_BO, {"accept": "application/json", **llaves_bo()}, None)
     if res.get("error"):
         return {"error": res["error"]}
     if res.get("status") in (401, 403):
         return {"error": f"el backoffice de ci rechazó las llaves ({res['status']})"}
     poner_ajuste("bo_probado", str(time.time()))
     return {"ok": True, "status": res.get("status")}
+
+
+def _id_compartido(u: dict) -> str:
+    base = re.sub(r"[^A-Za-z0-9_-]", "", str(u.get("id") or ""))[:40]
+    return "c-" + (base or hashlib.sha256(str(u.get("email") or "").lower().encode()).hexdigest()[:12])
+
+
+def sincronizar_compartidos(datos: dict) -> dict:
+    lista = [u for u in datos.get("usuarios") or [] if isinstance(u, dict) and "@" in str(u.get("email") or "") and u.get("password")]
+    huella = hashlib.sha256(json.dumps({"u": lista}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    if huella == ajuste("compartidos_huella"):
+        poner_ajuste("compartidos_en", str(time.time()))
+        return {"ok": True, "cambios": False}
+    propios = {u["email"] for u in usuarios() if not u.get("compartido")}
+    vigentes = set()
+    for u in lista:
+        email = str(u["email"]).strip().lower()
+        if email in propios:
+            continue
+        uid = _id_compartido(u)
+        vigentes.add(uid)
+        guardar_secreto(f"usuario:{uid}", str(u["password"]))
+        if hay_secreto(f"otp:{uid}"):
+            borrar_secreto(f"otp:{uid}")
+        with _CANDADO, _db() as con:
+            con.execute("""INSERT INTO usuarios_prueba(id, email, alias, empresa, company_id, nivel, pais, compartido)
+                           VALUES(?,?,?,?,?,?,?,1) ON CONFLICT(id) DO UPDATE SET email=excluded.email, alias=excluded.alias,
+                           empresa=excluded.empresa, company_id=excluded.company_id, nivel=excluded.nivel, pais=excluded.pais, compartido=1""",
+                        (uid, email, str(u.get("alias") or email.split("@")[0])[:80], str(u.get("empresa") or ""),
+                         str(u.get("company_id") or ""), str(u.get("nivel") or ""), str(u.get("pais") or "")))
+        _TOKENS.pop(uid, None)
+    for u in usuarios():
+        if u.get("compartido") and u["id"] not in vigentes:
+            borrar_secreto(f"usuario:{u['id']}")
+            borrar_secreto(f"otp:{u['id']}")
+            with _CANDADO, _db() as con:
+                con.execute("DELETE FROM usuarios_prueba WHERE id = ?", (u["id"],))
+            _TOKENS.pop(u["id"], None)
+    poner_ajuste("compartidos_huella", huella)
+    poner_ajuste("compartidos_en", str(time.time()))
+    return {"ok": True, "cambios": True, "usuarios": len(vigentes)}
 
 
 def guardar_bd(host: str, puerto: str, usuario: str, password: str) -> dict:
@@ -392,9 +594,9 @@ def ejecutar(pedido: dict) -> dict:
     cabeceras.update({str(k): str(v) for k, v in (pedido.get("headers") or {}).items() if v not in (None, "")})
     uid = pedido.get("usuario")
     if admin:
-        if not (hay_secreto("bo:ktk") and hay_secreto("bo:at")):
-            raise ValueError("faltan tus llaves de backoffice de ci (Configuración)")
-        cabeceras.update({"KNOWN-TOKEN-KEY": leer_secreto("bo:ktk"), "ADMIN-TOKEN-KEY": leer_secreto("bo:at")})
+        if not hay_bo():
+            raise ValueError("faltan las llaves de backoffice de ci (Configuración)")
+        cabeceras.update(llaves_bo())
     if uid and via in ("lb", "admin"):
         datos = _jwt(_token(uid))
         cabeceras = {**{k: str(v) for k, v in {"Claim-Customer-Id": datos.get("custom:customer_id"), "Claim-B2B-User-Id": datos.get("custom:b2b_user_id"),

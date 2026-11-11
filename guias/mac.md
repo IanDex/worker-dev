@@ -73,9 +73,11 @@ tu worker, con tus credenciales. Configúralas una vez en el panel (botón del e
 
 1. **Base de datos de ci:** tu usuario de la BD de ci. Con la VPN prendida, pega host, puerto, usuario y contraseña y
    toca *Probar y guardar*. El plan solo lee: cada consulta corre en una sesión de solo lectura.
-2. **Usuarios de prueba de ci:** tus usuarios B2B de prueba, de **dos empresas distintas** (así se prueba que un usuario
-   no ve datos de otra empresa). Pega correo, contraseña y el código OTP de ci de cada uno.
-3. **Backoffice de ci:** tu KNOWN-TOKEN-KEY y tu ADMIN-TOKEN-KEY.
+2. **Usuarios de prueba de ci:** llegan precargados por el revisor (con candado, no se quitan). Hacen falta de **dos
+   empresas distintas** (así se prueba que un usuario no ve datos de otra empresa); si quieres, agrega los tuyos con
+   correo, contraseña y el código OTP de ci.
+3. **Backoffice de ci:** no se pega nada: el worker lee las llaves de tu clon de `ms-config-properties` (rama master),
+   que debe estar dentro de tu carpeta de microservicios.
 
 Las contraseñas y llaves van al llavero de tu sistema y nunca salen de tu máquina. Si un escenario falla por un dato
 del plan (ruta, vía, cabecera, id), corrígelo en el chat de la sección de pruebas; lo que se espera de cada escenario
