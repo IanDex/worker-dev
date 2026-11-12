@@ -39,7 +39,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "v3-worker 4.1.3"
+VERSION = "v3-worker 4.2.0"
 AQUI = Path(__file__).resolve().parent
 
 
@@ -381,8 +381,11 @@ def revisar(p: dict) -> None:
     if (carpeta / "ENCARGO.json").exists():
         armar_local(p, carpeta)
     _progreso(p, "preparando")
-    ai = preparar_ai_context(carpeta)
-    log(f"#{p['pr']}: ai-context {ai[:7]}" if ai else f"#{p['pr']}: sin ai-context (el análisis sigue sin él)")
+    ai_sel = preparar_ai_context(carpeta, str(p.get("repo") or ""))
+    ai = (ai_sel or {}).get("commit")
+    log(f"#{p['pr']}: ai-context {ai[:7]} · {len(ai_sel['cargar'])} reglas, {ai_sel['consulta']} de consulta"
+        + (f", contexto de {', '.join(ai_sel['relacionados'])}" if ai_sel["relacionados"] else "") if ai_sel
+        else f"#{p['pr']}: sin ai-context (el análisis sigue sin él)")
     pedido = (carpeta / "PEDIDO.txt").read_text(encoding="utf-8")
     propia = p.get("politica") if isinstance(p.get("politica"), dict) else None
     proveedor, modelo = motor_para(p, None if propia and propia.get("modo") == "fijo" else politica_hodor(), elegidos())
@@ -395,7 +398,8 @@ def revisar(p: dict) -> None:
     sello = {"fila": p["id"], "pr": str(p["pr"]), "paquete_sha": p["paquete_sha"], "reglas_sha": p.get("reglas_sha") or "",
              "desafio": p["desafio"], "sesion": sesion,
              "turnos": turnos, "segundos": int(time.time() - inicio), "version": VERSION, "kit": huella_kit(),
-             "proveedor": proveedor, "modelo": modelo, "ai_context": ai}
+             "proveedor": proveedor, "modelo": modelo, "ai_context": ai,
+             "ai_context_reglas": (ai_sel or {}).get("cargar") or [], "ai_context_servicios": (ai_sel or {}).get("relacionados") or []}
     res = _api("POST", "/api/v3/resultado", {"sello": sello, "final": final, "costo": costo, "firma": firma(sello, final)})
     if res.get("error"):
         raise RuntimeError(f"Hodor rechazó el resultado: {res['error']}")
@@ -835,19 +839,133 @@ def leer_ai_context() -> dict:
             return {}
 
 
-def preparar_ai_context(carpeta: Path) -> str | None:
+AI_ORG = "shared/rules/"
+AI_GRUPOS = "shared/rules/groups/"
+AI_REPOS = "repositories/"
+AI_RELACIONADOS = 4
+AI_CONTEXTO_CHICO = ("CONTEXT.md", "rules/context.md", "rules/context-product.md")
+_AI_ARBOL: dict = {"commit": "", "rutas": []}
+
+
+def _arbol_ai(clon: Path, commit: str) -> list:
+    if _AI_ARBOL["commit"] != commit:
+        rutas = [r for r in _git_ai(clon, "ls-tree", "-r", "-z", "--name-only", commit).split("\0") if r]
+        _AI_ARBOL.update(commit=commit, rutas=rutas)
+    return _AI_ARBOL["rutas"]
+
+
+def _un_nivel(patron: str, rutas: list) -> list:
+    import fnmatch
+    if "*" not in patron:
+        return [patron] if patron in rutas else []
+    hondo = patron.count("/")
+    return sorted(r for r in rutas if r.count("/") == hondo and fnmatch.fnmatchcase(r, patron))
+
+
+AI_ORG_FUERA = ("area-isolation.md", "review-triage.md", "skill-recommendation.md", "team-structure.md",
+                "workspace-boundaries.md", "workspace-paths.md")
+
+
+def _rules_a_cargar(texto: str) -> list:
+    seccion = re.search(r"^##\s+Rules a cargar\s*$(.*?)(?=^##\s|\Z)", texto, re.M | re.S)
+    if not seccion:
+        return []
+    cuerpo = seccion.group(1)
+    rutas = [c for c in re.findall(r"`([^`\s]+)`", cuerpo) if "/" in c and c.endswith(".md") and ".." not in c]
+    grupos = re.findall(r"^#+\s*Grupo\s+`([a-z0-9-]+)`", cuerpo, re.M)
+    return rutas + [f"{AI_GRUPOS}{g}/*.md" for g in grupos]
+
+
+def _grupos_registro(clon: Path, commit: str, repo: str) -> list:
+    try:
+        reg = json.loads(_git_ai(clon, "show", f"{commit}:repo-map/registry.json"))
+        grupos = ((reg.get("repositories") or {}).get(repo) or {}).get("rules_groups") or []
+    except Exception:  # noqa: BLE001
+        grupos = []
+    if not grupos and re.match(r"(ms|arch)-|crm-b2b-backend$", repo or ""):
+        grupos = ["backend"]
+    return [g for g in grupos if re.fullmatch(r"[a-z0-9-]+", str(g))]
+
+
+def _relacionados(carpeta: Path, repo: str, rutas: list) -> list:
+    texto = ""
+    try:
+        texto = (carpeta / "diff.patch").read_text(encoding="utf-8", errors="replace")[:2_000_000]
+    except OSError:
+        pass
+    try:
+        texto += "\n" + "\n".join(json.loads((carpeta / "pr.json").read_text(encoding="utf-8")).get("archivos") or [])
+    except (OSError, ValueError):
+        pass
+    cuenta: dict = {}
+    candidatos = re.findall(r"\b((?:ms|arch)-[a-z0-9][a-z0-9-]*[a-z0-9])\b", texto)
+    candidatos += ["ms-" + c.lower() for c in re.findall(r"/client/([A-Za-z0-9]+)/", texto)]
+    candidatos += ["ms-" + re.sub(r"(?<!^)([A-Z])", r"-\1", c).lower() for c in re.findall(r"\b([A-Z][A-Za-z0-9]+?)(?:Client|Api)\b", texto)]
+    for c in candidatos:
+        if c != repo and f"{AI_REPOS}{c}/CONTEXT.md" in rutas:
+            cuenta[c] = cuenta.get(c, 0) + 1
+    return [c for c, _n in sorted(cuenta.items(), key=lambda x: (-x[1], x[0]))][:AI_RELACIONADOS]
+
+
+def seleccion_ai_context(clon: Path, commit: str, carpeta: Path, repo: str) -> dict:
+    rutas = _arbol_ai(clon, commit)
+    md = [r for r in rutas if r.endswith(".md")]
+    contexto = f"{AI_REPOS}{repo}/CONTEXT.md"
+    patrones = _rules_a_cargar(_git_ai(clon, "show", f"{commit}:{contexto}")) if repo and contexto in rutas else []
+    patrones += [f"{AI_ORG}*.md", *[f"{AI_GRUPOS}{g}/*.md" for g in _grupos_registro(clon, commit, repo)]]
+    if repo:
+        patrones.append(f"{AI_REPOS}{repo}/rules/*.md")
+    cargar = []
+    for patron in patrones:
+        for r in _un_nivel(patron, md):
+            fuera = r.startswith(AI_ORG) and r.count("/") == AI_ORG.count("/") and r.rsplit("/", 1)[-1] in AI_ORG_FUERA
+            ajeno = r.startswith(AI_REPOS) and not r.startswith(f"{AI_REPOS}{repo}/")
+            if r not in cargar and not fuera and not ajeno:
+                cargar.append(r)
+    grupos = sorted({r[len(AI_GRUPOS):].split("/", 1)[0] for r in cargar if r.startswith(AI_GRUPOS)})
+    consulta = [r for r in md if r not in cargar and (
+        any(r.startswith(f"{AI_GRUPOS}{g}/") and r.count("/") > AI_GRUPOS.count("/") + 1 for g in grupos)
+        or (r.startswith(f"{AI_ORG}adr/") and r.count("/") == AI_ORG.count("/") + 1)
+        or (repo and r.startswith(f"{AI_REPOS}{repo}/") and "/skills/" not in r and "/.state/" not in r))]
+    relacionados = {c: [f"{AI_REPOS}{c}/{n}" for n in AI_CONTEXTO_CHICO if f"{AI_REPOS}{c}/{n}" in rutas]
+                    for c in _relacionados(carpeta, repo, rutas)}
+    return {"cargar": cargar, "consulta": consulta, "relacionados": relacionados}
+
+
+def _leeme_ai(repo: str, commit: str, sel: dict) -> str:
+    lista = lambda rs: "\n".join(f"- `{r}`" for r in rs) or "- (nada)"
+    rel = "\n".join(f"- **{c}**: " + ", ".join(f"`{r}`" for r in rs) for c, rs in sel["relacionados"].items()) or "- (el diff no toca otros servicios con contexto en ai-context)"
+    return (f"# ai-context para este análisis ({repo or 'repo sin nombre'} · ai-context {commit[:7]})\n\n"
+            "Solo está lo que aplica a este repo: lo que su `CONTEXT.md` manda cargar, el detalle de consulta y el contexto de los "
+            "servicios que el diff toca. Cada archivo conserva su ruta del repo `ai-context`: úsala tal cual en `fuente.archivo`.\n\n"
+            "## 1. Reglas del repo (léelas según el tema que toca el diff)\n\n" + lista(sel["cargar"]) +
+            "\n\n## 2. Detalle de consulta (ábrelo solo si el diff toca ese tema)\n\n"
+            "ADRs y postmortems completos (sus índices están en la sección 1) y el contexto grande del servicio (API, base de datos, "
+            "infraestructura): búscalo con Grep y lee solo la parte que necesitas.\n\n" + lista(sel["consulta"]) +
+            "\n\n## 3. Servicios que toca el PR (solo contexto, no son lineamientos)\n\n" + rel + "\n")
+
+
+def preparar_ai_context(carpeta: Path, repo: str = "") -> dict | None:
     destino = carpeta / "ai-context"
     try:
         shutil.rmtree(destino, ignore_errors=True)
         fetch_ai_context(CADA_FETCH_AI)
-        ai = leer_ai_context()
-        if not ai:
+        clon = clon_ai_context()
+        if not clon:
             return None
-        for nombre, texto in ai["archivos"].items():
-            ruta = destino / "backend" / nombre
+        commit = _git_ai(clon, "rev-parse", "--verify", "origin/master^{commit}").strip()
+        if not commit:
+            return None
+        sel = seleccion_ai_context(clon, commit, carpeta, repo)
+        todos = [*sel["cargar"], *sel["consulta"], *[r for rs in sel["relacionados"].values() for r in rs]]
+        if not sel["cargar"]:
+            return None
+        for r in todos:
+            ruta = destino / r
             ruta.parent.mkdir(parents=True, exist_ok=True)
-            ruta.write_text(texto, encoding="utf-8")
-        return ai["commit"]
+            ruta.write_text(_git_ai(clon, "show", f"{commit}:{r}"), encoding="utf-8")
+        (destino / "LEEME.md").write_text(_leeme_ai(repo, commit, sel), encoding="utf-8")
+        return {"commit": commit, "cargar": sel["cargar"], "consulta": len(sel["consulta"]), "relacionados": sorted(sel["relacionados"])}
     except Exception as err:  # noqa: BLE001
         log(f"ai-context: no pude prepararlo para el análisis: {str(err)[:200]}")
         shutil.rmtree(destino, ignore_errors=True)
