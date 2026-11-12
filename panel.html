@@ -889,7 +889,7 @@ function rechazoDe(p) {
     const grupos = [];
     for (const v of vs) {
       let g = grupos.find((x) => x.regla === v.regla);
-      if (!g) { g = { regla: v.regla, nombre: v.nombre || v.regla, filas: [] }; grupos.push(g); }
+      if (!g) { g = { regla: v.regla, nombre: v.nombre || v.regla, ayuda: v.ayuda || "", filas: [] }; grupos.push(g); }
       g.filas.push(v);
     }
     grupos.sort((a, b) => b.filas.length - a.filas.length);
@@ -938,7 +938,7 @@ function tarjetaRechazo(p, cerrar) {
   </div>`;
 }
 function textoRechazo(r) {
-  return (r.grupos || []).map((g) => `${g.nombre} (${g.filas.length})\n` + g.filas.map((v) => `  ${v.archivo}${v.linea ? `:${v.linea}` : ""}${v.detalle ? `  ${v.detalle}` : ""}`).join("\n")).join("\n\n");
+  return (r.grupos || []).map((g) => `${g.nombre} (${g.filas.length})\n${g.ayuda ? `${g.ayuda}\n` : ""}` + g.filas.map((v) => `  ${v.archivo}${v.linea ? `:${v.linea}` : ""}${v.detalle ? `  ${v.detalle}` : ""}`).join("\n")).join("\n\n");
 }
 function cuerpoReglas(r, clave) {
   const corto = (ruta) => String(ruta || "").split("/").pop();
@@ -947,6 +947,7 @@ function cuerpoReglas(r, clave) {
       <div class="resumen-reglas">${r.grupos.map((g) => `<span><b class="mono" style="font-weight:600">${g.filas.length}</b> ${esc(g.nombre)}</span>`).join("")}</div></section>
     ${r.grupos.map((g, i) => `<details class="grupo-regla"${i === 0 ? " open" : ""}>
       <summary><span class="flecha" aria-hidden="true">${ic(`<path d="M9 6l6 6-6 6"></path>`)}</span><span style="flex:1">${esc(g.nombre)}</span><span class="mono" style="font-size:12px;color:var(--suave)">${g.filas.length}</span></summary>
+      ${g.ayuda ? `<p style="margin:10px 14px 0;font-size:12.5px;line-height:1.55;color:var(--suave)">${esc(g.ayuda)}</p>` : ""}
       <div class="filas mono">${g.filas.map((v) => `<span class="donde" title="${esc(v.archivo)}">${esc(corto(v.archivo))}${v.linea ? `:${esc(v.linea)}` : ""}</span><span class="que-dice" title="${esc(v.detalle || "")}">${esc(v.detalle || "")}</span>`).join("")}</div>
     </details>`).join("")}
     <section style="display:flex;flex-direction:column;gap:8px"><span class="rot-motivo mono">Qué hacer</span>
