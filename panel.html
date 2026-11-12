@@ -1106,27 +1106,49 @@ function seccionHallazgos(x, d) {
     ${fuera.length ? `<section class="grupo-h">${cab(`Fuera de alcance · ${fuera.length}`, "no te bloquea: está en código que no cambió desde la ronda anterior, no suma al puntaje y le llega al revisor")}${fuera.map((h) => tarjetaHallazgo(h, `<span class="chip c-acc">va al revisor</span>`)).join("")}</section>` : ""}`;
 }
 
-function seccionDebate(x, d) {
-  if (x.estado !== "v3_analizado" || !bloqueo(d)) return "";
-  const enMaquina = (S.datos.sesiones || []).map(String).includes(String(x.id));
-  const chat = (S.debate[x.id] || []);
-  const burbuja = (m) => m.rol === "dev"
+function rondasDelPr(x) {
+  return (S.datos.analisis || []).filter((a) => String(a.pr) === String(x.pr)).sort((a, b) => Number(a.id) - Number(b.id));
+}
+function burbujaDebate(m) {
+  return m.rol === "dev"
     ? `<div class="burbuja-yo">${esc(m.texto)}</div>`
     : `<div class="burbuja-el"><span style="white-space:pre-wrap">${esc(m.texto)}</span>
        ${m.meta && m.meta.retirado != null ? `<span class="chip c-ok" style="align-self:flex-start">retirado: ${esc(m.meta.titulo || "")}${m.meta.puntaje != null ? ` · puntaje ${esc(m.meta.puntaje)}` : ""}</span>` : ""}
        ${m.meta && m.meta.rechazado ? `<span class="chip c-bad" style="align-self:flex-start">${esc(m.meta.rechazado)}</span>` : ""}
        ${m.meta && m.meta.error ? `<span class="chip c-bad" style="align-self:flex-start">${esc(m.meta.error === true ? "error" : m.meta.error)}</span>` : ""}</div>`;
-  const bitacora = (x.debate || []).map((b) => `<li><b>${esc(b.titulo)}</b> (${esc(b.severidad)}): ${esc(b.argumento)}</li>`).join("");
-  return `<section class="caja" style="gap:12px" aria-label="Debate">
-    <b>Discutir con la revisión</b>
-    <span style="color:var(--suave);font-size:13px">Es la misma sesión que hizo este análisis. Reglas fijas: el puntaje no se negocia; un hallazgo medio o bajo se retira solo con evidencia verificada en el código; una crítica, una alta o un IDOR no se retiran aquí: se hablan con el revisor. Cada retiro le llega a Hodor con tu argumento.</span>
-    ${d.puntaje_original != null && d.puntaje_original !== d.puntaje ? `<span class="mono" style="font-size:13px;color:var(--suave)">Puntaje: ${esc(d.puntaje_original)} → ${esc(d.puntaje)} (recalculado por los hallazgos que salieron, no por pedido)</span>` : ""}
-    ${bitacora ? `<details><summary style="cursor:pointer;color:var(--suave)">Retirados en el debate · ${(x.debate || []).length}</summary><ul style="margin:8px 0 0;padding-left:18px;color:var(--suave);line-height:1.6">${bitacora}</ul></details>` : ""}
-    <div style="display:flex;flex-direction:column;gap:12px">${chat.map(burbuja).join("") || `<span style="color:var(--tenue);font-size:13px">Todavía no hay mensajes.</span>`}${S.pensando === `debate:${x.id}` ? `<span class="chip c-acc" style="align-self:flex-start">la revisión está leyendo el código…</span>` : ""}</div>
-    ${enMaquina ? `<div style="display:flex;gap:10px;align-items:flex-end"><label for="msg-debate" class="sr">Tu argumento</label>
+}
+function seccionDebate(x, d) {
+  if (["v3", "corriendo", "pendiente"].includes(x.estado) && !x.entregado) return "";
+  const debate = x.estado === "v3_analizado" && !!bloqueo(d);
+  const enMaquina = (S.datos.sesiones || []).map(String).includes(String(x.id));
+  const chat = (S.debate[x.id] || []);
+  const rondas = rondasDelPr(x);
+  const anteriores = rondas.filter((a) => String(a.id) !== String(x.id) && (S.debate[a.id] || []).length).map((a) => {
+    const n = rondas.indexOf(a) + 1;
+    return `<details><summary style="cursor:pointer;color:var(--suave)">Ronda ${n} · REV/${esc(a.id)} · ${(S.debate[a.id] || []).length} mensaje${(S.debate[a.id] || []).length === 1 ? "" : "s"}</summary>
+      <div style="display:flex;flex-direction:column;gap:12px;margin-top:10px">${S.debate[a.id].map(burbujaDebate).join("")}</div></details>`;
+  }).join("");
+  const bitacora = rondas.flatMap((a) => a.debate || []).map((b) => `<li><b>${esc(b.titulo)}</b> (${esc(b.severidad)}): ${esc(b.argumento)}</li>`).join("");
+  const nRetirados = rondas.reduce((n, a) => n + (a.debate || []).length, 0);
+  const pensando = S.pensando === `debate:${x.id}` ? `<span class="chip c-acc" style="align-self:flex-start">la revisión está leyendo el código…</span>` : "";
+  const entrada = debate
+    ? (enMaquina ? `<div style="display:flex;gap:10px;align-items:flex-end"><label for="msg-debate" class="sr">Tu argumento</label>
       <textarea id="msg-debate" rows="2" style="flex:1" placeholder="Argumenta con evidencia: archivo, línea, prueba…"></textarea>
       <button class="btn prim" data-debatir="${esc(x.id)}" ${S.pensando ? "disabled" : ""}>Enviar</button></div>`
-      : `<span style="color:var(--warn);font-size:13px">La sesión de esta revisión no está en esta máquina: vuelve a analizar el PR para poder discutirla.</span>`}
+      : `<span style="color:var(--warn);font-size:13px">La sesión de esta revisión no está en esta máquina: vuelve a analizar el PR para poder discutirla.</span>`)
+    : `<div style="display:flex;gap:10px;align-items:flex-end"><label for="msg-debate" class="sr">Tu pregunta</label>
+      <textarea id="msg-debate" rows="2" style="flex:1" placeholder="Pregunta sobre el análisis, un hallazgo o el código…"></textarea>
+      <button class="btn prim" data-consultar="${esc(x.id)}" ${S.pensando ? "disabled" : ""}>Preguntar</button></div>`;
+  return `<section class="caja" style="gap:12px" aria-label="${debate ? "Debate" : "Preguntas sobre este PR"}">
+    <b>${debate ? "Discutir con la revisión" : "Preguntas sobre este PR"}</b>
+    <span style="color:var(--suave);font-size:13px">${debate
+      ? "Es la misma sesión que hizo este análisis. Reglas fijas: el puntaje no se negocia; un hallazgo medio o bajo se retira solo con evidencia verificada en el código; una crítica, una alta o un IDOR no se retiran aquí: se hablan con el revisor. Cada retiro le llega a Hodor con tu argumento."
+      : "Pregúntale a la revisión sobre este análisis aunque el PR ya esté entregado o mergeado: por qué marcó algo, cómo corregirlo o qué revisó. Aquí no se retiran hallazgos ni cambia el puntaje."}</span>
+    ${d.puntaje_original != null && d.puntaje_original !== d.puntaje ? `<span class="mono" style="font-size:13px;color:var(--suave)">Puntaje: ${esc(d.puntaje_original)} → ${esc(d.puntaje)} (recalculado por los hallazgos que salieron, no por pedido)</span>` : ""}
+    ${bitacora ? `<details><summary style="cursor:pointer;color:var(--suave)">Retirados en el debate · ${nRetirados}</summary><ul style="margin:8px 0 0;padding-left:18px;color:var(--suave);line-height:1.6">${bitacora}</ul></details>` : ""}
+    ${anteriores}
+    <div style="display:flex;flex-direction:column;gap:12px">${chat.map(burbujaDebate).join("") || `<span style="color:var(--tenue);font-size:13px">${rondas.length > 1 ? "Todavía no hay mensajes en esta ronda." : "Todavía no hay mensajes."}</span>`}${pensando}</div>
+    ${entrada}
   </section>`;
 }
 
@@ -1288,10 +1310,10 @@ async function cargarCajon(id) {
   const pr = String(x.pr), primeraVez = !(pr in S.hist);
   const [plan, deb, hist] = await Promise.all([
     (x.destino || "") === "release" ? api(`/api/plan/${id}`).catch(() => null) : Promise.resolve(null),
-    api(`/api/debate/${id}`).catch(() => null),
+    Promise.all(rondasDelPr(x).map((a) => api(`/api/debate/${a.id}`).then((r) => [a.id, r]).catch(() => [a.id, null]))),
     opcional(`/api/historial/${encodeURIComponent(pr)}`)]);
   if (plan) S.plan[id] = plan;
-  if (deb) S.debate[id] = deb.chat || [];
+  for (const [fila, r] of deb) if (r) S.debate[fila] = r.chat || [];
   S.hist[pr] = hist && Array.isArray(hist.rondas) ? hist : null;
   if (primeraVez && S.hist[pr] && S.hist[pr].rondas.length) S.abiertos.add(`hist:${pr}:${S.hist[pr].rondas[0].fila ?? 0}`);
   if (String(S.cajon) === String(id)) pintar();
@@ -1781,6 +1803,12 @@ document.addEventListener("click", async (e) => {
     const id = el.dataset.debatir; (S.debate[id] ||= []).push({ rol: "dev", texto: mensaje }); S.pensando = `debate:${id}`; pintar();
     const r = await api("/api/debate", { fila: id, mensaje }); S.pensando = ""; if (r.error) aviso(r.error, "bad");
     await cargar(); return cargarCajon(id);
+  }
+  if ((el = t("[data-consultar]"))) {
+    const caja = document.getElementById("msg-debate"), mensaje = caja.value.trim(); if (mensaje.length < 3) return aviso("Escribe tu pregunta.");
+    const id = el.dataset.consultar; (S.debate[id] ||= []).push({ rol: "dev", texto: mensaje }); S.pensando = `debate:${id}`; pintar();
+    const r = await api("/api/consulta", { fila: id, mensaje }); S.pensando = ""; if (r.error) aviso(r.error, "bad");
+    return cargarCajon(id);
   }
   if ((el = t("[data-plan-chat]"))) {
     const caja = document.getElementById("msg-plan"), mensaje = caja.value.trim(); if (mensaje.length < 3) return aviso("Escribe qué dato está mal.");
