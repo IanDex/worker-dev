@@ -810,7 +810,7 @@ function semaforo(h) {
 const RAMAS = [["development", "dev"], ["master", "ci"], ["release", "prod"]];
 const ramasDev = () => (S.datos && S.datos.sin_dev ? RAMAS.slice(1) : RAMAS);
 
-function esIdor(d) { return (d && d.hallazgos || []).some((h) => /idor/i.test(`${h.titulo || ""} ${h.comentario || ""} ${h.categoria || ""}`)); }
+function esIdor(d) { return (d && d.hallazgos || []).some((h) => /\bidor\b/i.test(`${h.titulo || ""} ${h.comentario || ""} ${h.categoria || ""}`)); }
 function bloqueo(d) {
   if (!d || d.puntaje == null) return "el análisis no trajo resultado: vuelve a pedirlo";
   if (esIdor(d)) return "tiene un IDOR: corrígelo; solo el revisor lo cierra";
