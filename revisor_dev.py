@@ -39,7 +39,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "v3-worker 1.5.0.0"
+VERSION = "v3-worker 1.5.0.1"
 AQUI = Path(__file__).resolve().parent
 
 
@@ -376,6 +376,10 @@ def armar_local(p: dict, carpeta: Path) -> None:
 class Rechazo(RuntimeError):
     """Lo que impide analizar el PR o lo que le falta a tu máquina: no se reintenta y lo ves en el panel tal cual."""
 
+    def __init__(self, motivo: str, violaciones: list | None = None):
+        super().__init__(motivo)
+        self.violaciones = violaciones or []
+
 
 TICKET = {"sin_ticket": 0.0}
 TICKETS = TRABAJO / "tickets"
@@ -705,7 +709,9 @@ def preparar_v15(p: dict) -> tuple:
     _accion(p, "Revisa las reglas que no necesitan IA")
     violaciones = mods["verificador"].verificar(info)
     if violaciones:
-        raise Rechazo(mods["verificador"].texto(violaciones))
+        nombres = getattr(mods["verificador"], "NOMBRES", {})
+        raise Rechazo(mods["verificador"].texto(violaciones),
+                      [{**v, "nombre": nombres.get(v.get("regla"), v.get("regla"))} for v in violaciones[:300]])
     carpeta = TRABAJO / f"pr{p['pr']}-{p['id']}"
     shutil.rmtree(carpeta, ignore_errors=True)
     if carpeta.exists():
@@ -1788,7 +1794,8 @@ def _correr(p: dict, previos: int) -> None:
     except Rechazo as err:
         _progreso(p, "error", error=str(err)[:200])
         log(f"#{p.get('pr')}: no se analiza: {err}")
-        res = _api("POST", "/api/v3/fallo", {"id": p["id"], "error": str(err)[:2000], "intentos": 0, "rechazo": True})
+        res = _api("POST", "/api/v3/fallo", {"id": p["id"], "error": str(err)[:2000], "intentos": 0, "rechazo": True,
+                                             "violaciones": err.violaciones})
         if res.get("error"):
             log(f"#{p.get('pr')}: no pude avisarle a Hodor: {res['error']}")
     except Exception as err:  # noqa: BLE001 — se reintenta en la próxima vuelta, hasta el tope

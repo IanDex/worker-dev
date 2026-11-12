@@ -178,6 +178,18 @@ try { const t = localStorage.getItem("hodor-tema"); if (t === "claro" || t === "
   .motivo-texto p { margin: 0; padding: 10px 12px; background: var(--hondo); border: 1px solid var(--linea); border-radius: 8px; }
   .nodo.t-tu { background: var(--warn-f); border-color: var(--warn); } .nodo.t-tu .que { color: var(--warn); }
   .nodo.t-mal { background: var(--bad-f); border-color: var(--bad); } .nodo.t-mal .que { color: var(--bad); }
+  .nodo.t-rech { background: var(--caja); border-color: var(--linea-3); } .nodo.t-rech .que { display: flex; align-items: center; gap: 8px; }
+  .nodo.t-rech .que::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--bad); flex-shrink: 0; }
+  .grupo-regla { border: 1px solid var(--linea); border-radius: 10px; overflow: hidden; }
+  .grupo-regla > summary { list-style: none; display: flex; align-items: center; gap: 10px; padding: 12px 14px; background: var(--caja); cursor: pointer; font-weight: 500; }
+  .grupo-regla > summary::-webkit-details-marker { display: none; }
+  .grupo-regla > summary .flecha { color: var(--tenue); transition: transform .15s; display: grid; }
+  .grupo-regla[open] > summary .flecha { transform: rotate(90deg); }
+  .grupo-regla .filas { display: grid; grid-template-columns: minmax(180px, 280px) minmax(0, 1fr); gap: 4px 14px; padding: 10px 14px 12px; font-size: 12px; line-height: 1.5; }
+  .grupo-regla .filas .donde { color: var(--acc-t); overflow-wrap: anywhere; }
+  .grupo-regla .filas .que-dice { color: var(--tenue); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .resumen-reglas { display: flex; gap: 8px; flex-wrap: wrap; }
+  .resumen-reglas span { font-size: 12.5px; padding: 4px 10px; border-radius: 999px; background: var(--caja); border: 1px solid var(--linea); }
   .nodo.t-ok { background: var(--ok-f); } .nodo.t-ok .que { color: var(--ok); }
   .nodo.t-corre { background: var(--acc-f); border-color: var(--acc); } .nodo.t-corre .que { color: var(--acc); }
   .nodo.t-puede { border: 1.5px dashed var(--acc); } .nodo.t-puede .que { color: var(--acc); }
@@ -528,6 +540,7 @@ function estadoPr(x) {
   if (x.estado === "v3_listo") return ["Enviado · Hodor lo procesa", "c-warn"];
   if (x.estado === "hecha") return x.accion === "aprobado" ? ["Enviado · aprobado", "c-ok"] : x.accion === "comentado" ? ["Enviado · con comentarios", "c-nar"] : ["Enviado · " + (x.accion || "procesado"), "c-info"];
   if (x.estado === "superada") return ["Cambió el commit · analiza de nuevo", "c-warn"];
+  if (x.estado === "cancelada" && x.rechazo) return [(x.rechazo.violaciones || []).length ? `No se analizó · ${x.rechazo.violaciones.length} reglas por corregir` : "No se analizó", "c-bad"];
   if (x.estado === "cancelada") return [x.motivo || "Cancelado", x.accion === "v3_fallo" ? "c-bad" : "c-off"];
   return [x.estado, "c-off"];
 }
@@ -706,16 +719,20 @@ function vistaRechazados() {
   const q = S.busca.trim().toLowerCase();
   const filas = (S.datos.rechazados || []).filter((x) => !q || `${x.pr} ${repoDe(x.url)} ${x.motivo}`.toLowerCase().includes(q));
   if (!filas.length) return `<p class="vacio">${(S.datos.rechazados || []).length ? "Nada coincide con la búsqueda." : "No tienes pedidos rechazados en los últimos 30 días."}</p>`;
-  return `<div class="rechazados">${filas.map((x) => `<div class="rechazado">
-      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span class="mono">${esc(repoDe(x.url) || "PR")} ${/^https?:/.test(x.url) ? externo(x.url, `#${esc(x.pr)}`) : `#${esc(x.pr)}`}</span><span class="mono" style="font-size:12px;color:var(--tenue)">${esc(hace(x.en))}</span><span style="flex:1"></span><button class="btn chico" data-pedir="${esc(x.url)}">Pedir de nuevo</button></div>
-      <span style="color:var(--suave);overflow-wrap:anywhere">${esc(x.motivo)}</span></div>`).join("")}</div>`;
+  return `<div class="rechazados">${filas.map((x) => {
+    const r = rechazoDe({ ...x, resultado: x.motivo }), clave = `rech:${x.pr}`;
+    S.motivos[clave] = { titulo: `${repoDe(x.url) ? `${repoDe(x.url)} ` : ""}#${x.pr}`, repo: "No se analizó", html: "", url: /^https?:/.test(x.url) ? x.url : "", rechazo: r };
+    return `<div class="rechazado">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span class="mono">${esc(repoDe(x.url) || x.repo || "PR")} ${/^https?:/.test(x.url) ? externo(x.url, `#${esc(x.pr)}`) : `#${esc(x.pr)}`}</span><span class="mono" style="font-size:12px;color:var(--tenue)">${esc(hace(x.en))}</span><span style="flex:1"></span><button class="btn chico" data-motivo="${esc(clave)}">${r.grupos ? "Ver qué corregir" : r.archivos.length ? "Ver qué falta" : "Ver motivo"}</button><button class="btn chico prim" data-pedir="${esc(x.url)}">Pedir de nuevo</button></div>
+      <span style="color:var(--suave);overflow-wrap:anywhere">${esc(r.grupos ? r.corto : recorte(r.resumen))}</span></div>`;
+  }).join("")}</div>`;
 }
 
 function teEsperan(historias) {
   const ocultos = S.datos.ocultos || {}, porHu = {};
   for (const p of porHistoria()) { if (ocultos[`hu:${p.historia}`] === "archivado") continue; ((porHu[p.historia] ||= {})[p.repo] ||= []).push(p); }
   let n = 0;
-  for (const repos of Object.values(porHu)) for (const [repo, prs] of Object.entries(repos)) n += caminoRepo(repo, prs).nodos.filter((x) => x.tono === "tu" || x.tono === "mal").length;
+  for (const repos of Object.values(porHu)) for (const [repo, prs] of Object.entries(repos)) n += caminoRepo(repo, prs).nodos.filter((x) => ["tu", "mal", "rech"].includes(x.tono)).length;
   return n;
 }
 
@@ -760,6 +777,8 @@ function avisoPedido(enHistoria) {
     sub = corriendo ? (an.historia && !enHistoria ? `También lo ves abajo, en ${an.historia}.` : "") : "El análisis terminó: ábrelo para ver los hallazgos.";
   }
   if (an && an.historia && !p.abierto) { S.abiertos.add(`mis:${an.historia}`); p.abierto = true; }
+  if (fresco && an.estado === "cancelada" && an.rechazo) return tarjetaRechazo({ pr: p.pr, repo: an.repo || p.repo, resultado: an.motivo, en: an.analizado_en, violaciones: an.rechazo.violaciones },
+    `<button class="icono" style="width:26px;height:26px" data-accion="cerrar-pedido" aria-label="Quitar este aviso">${I_CERRAR}</button>`);
   if (ped && ped.resultado) return tarjetaRechazo({ pr: p.pr, repo: p.repo, resultado: ped.resultado, en: ped.en },
     `<button class="icono" style="width:26px;height:26px" data-accion="cerrar-pedido" aria-label="Quitar este aviso">${I_CERRAR}</button>`);
   return `<div class="aviso-pedido t-${tono}" role="status">
@@ -865,6 +884,21 @@ async function irAHistoria(hu) {
   if (sec) { sec.scrollIntoView({ behavior: "smooth", block: "start" }); sec.classList.add("resaltada"); setTimeout(() => sec.classList.remove("resaltada"), 2200); }
 }
 function rechazoDe(p) {
+  const vs = p.violaciones || [];
+  if (vs.length) {
+    const grupos = [];
+    for (const v of vs) {
+      let g = grupos.find((x) => x.regla === v.regla);
+      if (!g) { g = { regla: v.regla, nombre: v.nombre || v.regla, filas: [] }; grupos.push(g); }
+      g.filas.push(v);
+    }
+    grupos.sort((a, b) => b.filas.length - a.filas.length);
+    const archivos = new Set(vs.map((v) => v.archivo)).size;
+    return { rama: "", archivos: [], grupos, total: vs.length,
+      corto: `${vs.length} regla${vs.length === 1 ? "" : "s"} sin IA por corregir · ${archivos} archivo${archivos === 1 ? "" : "s"}`,
+      resumen: `${vs.length} regla${vs.length === 1 ? "" : "s"} que Hodor revisa sin IA no se cumple${vs.length === 1 ? "" : "n"}, en ${archivos} archivo${archivos === 1 ? "" : "s"}. El análisis no arrancó: no gastó tokens.`,
+      pasos: ["Corrige cada línea de la lista en tu rama y haz push.", "Vuelve a pedir el análisis: Hodor revisa de nuevo estas reglas antes de arrancar."] };
+  }
   const crudo = String(p.resultado || "").replace(/^rechazado:\s*/, "");
   const motivo = crudo.replace(/^#\d+\s+todavía no se puede analizar:\s*/, "");
   const m = motivo.match(/^falta código en ([\w./-]+):\s*([\s\S]*)$/);
@@ -888,6 +922,7 @@ function rechazoDe(p) {
     pasos: [`Lleva esos cambios a ${rama} con un PR de la misma historia, o saca tu rama desde ${rama} y aplica solo lo que ya está ahí.`,
             `Cuando ese PR quede mergeado en ${rama}, vuelve a pedir este análisis.`] };
 }
+const recorte = (t) => { t = String(t || "").replace(/\s+/g, " ").trim(); return t.length > 170 ? `${t.slice(0, 167)}…` : t; };
 function tarjetaRechazo(p, cerrar) {
   const clave = `pedido:${p.pr}`;
   if (!p.repo) p = { ...p, repo: ([...(S.datos.prs || []), ...(S.datos.analisis || [])].find((x) => String(x.pr) === String(p.pr)) || {}).repo || "" };
@@ -896,11 +931,27 @@ function tarjetaRechazo(p, cerrar) {
   S.motivos[clave] = { titulo: `${p.repo ? `${p.repo} ` : ""}#${p.pr}`, repo: "No se pudo analizar", html: "", url, rechazo: r };
   return `<div class="rechazo" role="status">
     <span class="icono-mal" aria-hidden="true">${I_ALERTA}</span>
-    <div class="cuerpo"><b>No pude analizar <span class="mono">${esc(p.repo ? `${p.repo} ` : "")}#${esc(p.pr)}</span></b><span>${esc(r.resumen)}</span></div>
+    <div class="cuerpo"><b>No se analizó <span class="mono">${esc(p.repo ? `${p.repo} ` : "")}#${esc(p.pr)}</span></b><span>${esc(recorte(r.resumen))}</span></div>
     ${p.en ? `<span class="mono" style="font-size:12px;color:var(--tenue);white-space:nowrap">${esc(hace(p.en))}</span>` : ""}
-    <button class="btn chico prim" data-motivo="${esc(clave)}">${r.archivos.length ? "Ver qué falta" : "Ver motivo"}</button>
+    <button class="btn chico prim" data-motivo="${esc(clave)}">${r.grupos ? "Ver qué corregir" : r.archivos.length ? "Ver qué falta" : "Ver motivo"}</button>
     ${cerrar}
   </div>`;
+}
+function textoRechazo(r) {
+  return (r.grupos || []).map((g) => `${g.nombre} (${g.filas.length})\n` + g.filas.map((v) => `  ${v.archivo}${v.linea ? `:${v.linea}` : ""}${v.detalle ? `  ${v.detalle}` : ""}`).join("\n")).join("\n\n");
+}
+function cuerpoReglas(r, clave) {
+  const corto = (ruta) => String(ruta || "").split("/").pop();
+  return `<section style="display:flex;flex-direction:column;gap:8px"><span class="rot-motivo mono">Qué pasó</span>
+      <p style="margin:0;line-height:1.6;color:var(--suave)">Antes de gastar tokens, Hodor revisa sin IA las reglas del equipo sobre lo que el PR agrega. Estas no se cumplen: corrígelas, haz push y vuelve a pedir el análisis.</p>
+      <div class="resumen-reglas">${r.grupos.map((g) => `<span><b class="mono" style="font-weight:600">${g.filas.length}</b> ${esc(g.nombre)}</span>`).join("")}</div></section>
+    ${r.grupos.map((g, i) => `<details class="grupo-regla"${i === 0 ? " open" : ""}>
+      <summary><span class="flecha" aria-hidden="true">${ic(`<path d="M9 6l6 6-6 6"></path>`)}</span><span style="flex:1">${esc(g.nombre)}</span><span class="mono" style="font-size:12px;color:var(--suave)">${g.filas.length}</span></summary>
+      <div class="filas mono">${g.filas.map((v) => `<span class="donde" title="${esc(v.archivo)}">${esc(corto(v.archivo))}${v.linea ? `:${esc(v.linea)}` : ""}</span><span class="que-dice" title="${esc(v.detalle || "")}">${esc(v.detalle || "")}</span>`).join("")}</div>
+    </details>`).join("")}
+    <section style="display:flex;flex-direction:column;gap:8px"><span class="rot-motivo mono">Qué hacer</span>
+      <ol style="margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;line-height:1.55">${r.pasos.map((x) => `<li>${esc(x)}</li>`).join("")}</ol></section>
+    <button class="btn chico" style="align-self:flex-start" data-copiar-rechazo="${esc(clave)}">Copiar lista</button>`;
 }
 function cuerpoRechazo(r) {
   const archivos = r.archivos.map((a) => `<div>
@@ -927,7 +978,7 @@ function cajonMotivo() {
       </div>
       <button class="icono" data-cerrar aria-label="Cerrar">${I_CERRAR}</button>
     </header>
-    <div class="cajon-cuerpo">${m.rechazo ? cuerpoRechazo(m.rechazo) : `<div class="motivo-texto">${m.html.split(" · ").map((x) => `<p>${x}</p>`).join("")}</div>`}
+    <div class="cajon-cuerpo">${m.rechazo && m.rechazo.grupos ? cuerpoReglas(m.rechazo, S.motivo) : m.rechazo ? cuerpoRechazo(m.rechazo) : `<div class="motivo-texto">${m.html.split(" · ").map((x) => `<p>${x}</p>`).join("")}</div>`}
       ${m.url ? `<a class="btn chico" style="align-self:flex-start" href="${esc(m.url)}" target="_blank" rel="noopener">Abrir el PR en CodeCommit</a>` : ""}</div>
   </aside>`;
 }
@@ -959,6 +1010,13 @@ function nodo(p, anterior, rama) {
   if (an) {
     if (an.estado === "corriendo" || an.estado === "v3" || (an.estado === "pendiente" && !an.entregado)) return n("corre", estadoPr(an)[0], "", ver);
     if (an.estado === "superada") return n("tu", "Cambió el commit", "Analízalo de nuevo", `<button class="btn prim chico" data-pedir="${esc(p.url)}">Analizar</button>`);
+    if (an.estado === "cancelada" && an.rechazo) {
+      const clave = `pedido:${p.pr}`;
+      const r = rechazoDe({ pr: p.pr, resultado: an.motivo, violaciones: an.rechazo.violaciones });
+      S.motivos[clave] = { titulo: `${p.repo ? `${p.repo} ` : ""}#${p.pr}`, repo: "No se analizó", html: "", url: p.url, rechazo: r };
+      return n("rech", "No se analizó", r.grupos ? esc(r.corto) : "",
+        `<button class="btn chico" data-motivo="${esc(clave)}">${r.grupos ? "Ver qué corregir" : "Ver motivo"}</button><button class="btn prim chico" data-pedir="${esc(p.url)}">Analizar de nuevo</button>`);
+    }
     if (an.estado === "cancelada" && an.accion === "v3_fallo") return n("mal", "El análisis falló", an.motivo ? esc(an.motivo) : "Vuelve a pedirlo", `<button class="btn prim chico" data-pedir="${esc(p.url)}">Analizar de nuevo</button>`);
     if (an.estado === "cancelada" && an.accion === "v3_reanalizar") return n("mal", "Hay que volver a analizar", an.motivo ? esc(an.motivo) : "", `<button class="btn prim chico" data-pedir="${esc(p.url)}">Analizar de nuevo</button>`);
     if (an.estado === "v3_analizado" && an.reanalizar) return n("mal", "Hay que volver a analizar", esc(an.reanalizar), `<button class="btn prim chico" data-pedir="${esc(p.url)}">Analizar de nuevo</button>`);
@@ -1017,7 +1075,7 @@ function siguiente(caminos) {
   const frases = [];
   for (const tono of orden) {
     for (const c of caminos) for (const x of c.nodos) {
-      if (x.tono !== tono) continue;
+      if ((x.tono === "rech" ? "mal" : x.tono) !== tono) continue;
       const pr = x.p ? `<b>${esc(c.repo)} #${esc(x.p.pr)}</b>` : `<b>${esc(c.repo)}</b>`;
       if (tono === "mal") frases.push(`Corrige ${pr} (${x.rama})`);
       if (tono === "tu") frases.push(x.p && x.p.analisis && x.p.analisis.estado === "v3_analizado" ? `Entrega ${pr}` : `Analiza ${pr}`);
@@ -1031,7 +1089,8 @@ function siguiente(caminos) {
 function resumenHu(caminos) {
   const n = { mal: 0, tu: 0, ok: 0, corre: 0, entregar: 0 };
   for (const c of caminos) for (const x of c.nodos) {
-    if (x.tono in n) n[x.tono] += 1;
+    const t = x.tono === "rech" ? "mal" : x.tono;
+    if (t in n) n[t] += 1;
     if (x.tono === "tu" && /entregar/.test(x.que || "")) n.entregar += 1;
   }
   if (n.mal) return `<span class="chip c-bad">${n.mal} por corregir</span>`;
@@ -1841,6 +1900,7 @@ document.addEventListener("click", async (e) => {
   if ((el = t("[data-yo]"))) { S.menu = S.menu === "__yo" ? "" : "__yo"; S.buscaDev = ""; pintar(); if (S.menu) { const b = document.getElementById("busca-dev"); if (b) b.focus(); } return; }
   if ((el = t("[data-ver-como]"))) return elegirVerComo(el.dataset.verComo);
   if (verComo() && t("[data-archivar],[data-cerrar-pedido],[data-ayuda],[data-enviar],[data-terminal],[data-plan-otra]")) { S.menu = ""; pintar(); return aviso(`Estás viendo como ${nombreDev(verComo())}: solo lectura`, "bad"); }
+  if ((el = t("[data-copiar-rechazo]"))) { const m = S.motivos[el.dataset.copiarRechazo]; try { await navigator.clipboard.writeText(textoRechazo((m || {}).rechazo || {})); aviso("Lista copiada", "ok"); } catch { aviso("No pude copiar la lista.", "bad"); } return; }
   if ((el = t("[data-copiar-rev]"))) { const c = `REV/${el.dataset.copiarRev}`; try { await navigator.clipboard.writeText(c); aviso(`Copiado ${c}`, "ok"); } catch { aviso(`No pude copiar ${c}.`, "bad"); } return; }
   if ((el = t("[data-ayuda]"))) return abrirAyuda(el.dataset.ayuda);
   if ((el = t("[data-ayuda-tipo]"))) { S.ayuda.tipo = el.dataset.ayudaTipo; return pintar(); }
