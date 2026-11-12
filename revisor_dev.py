@@ -39,7 +39,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "v3-worker 4.2.0"
+VERSION = "v3-worker 1.5.0.0"
 AQUI = Path(__file__).resolve().parent
 
 
@@ -272,26 +272,19 @@ def _blob(clon: Path, sha: str) -> list:
     return datos.decode("utf-8", "replace").splitlines()
 
 
-def armar_local(p: dict, carpeta: Path) -> None:
-    """El contexto del PR armado en tu máquina con tu git: los archivos antes y después, el diff y dónde se usa lo que
-    cambia. Hodor ya dejó en el paquete la instrucción, las reglas y la huella del diff; si tu git da otra huella, no se
-    analiza."""
-    import difflib
-    enc = json.loads((carpeta / "ENCARGO.json").read_text(encoding="utf-8"))
-    repo, base, commit, destino = enc["repo"], enc["base"], enc["commit"], enc.get("destino") or "master"
-    raiz = carpeta / enc["carpeta"]
-    clon = _clon_del_repo(repo)
-    _progreso(p, "armando")
-    _accion(p, f"Trae {enc.get('rama') or 'la rama'} y {destino} de CodeCommit")
+def _traer(p: dict, clon: Path, repo: str, rama: str, destino: str, base: str, commit: str) -> None:
+    _accion(p, f"Trae {rama or 'la rama'} y {destino} de CodeCommit")
     r = _git_en(clon, "fetch", "-q", "origin", f"+refs/heads/{destino}:refs/hodor/destino", espera=600)
     if r.returncode != 0:
         raise RuntimeError(f"git fetch de {destino} en {repo} falló: {(r.stderr or b'').decode('utf-8', 'replace').strip()[:200]}")
-    if _git_en(clon, "cat-file", "-e", f"{commit}^{{commit}}", espera=30).returncode != 0 and enc.get("rama"):
-        _git_en(clon, "fetch", "-q", "origin", f"+refs/heads/{enc['rama']}:refs/hodor/fuente", espera=600)
+    if _git_en(clon, "cat-file", "-e", f"{commit}^{{commit}}", espera=30).returncode != 0 and rama:
+        _git_en(clon, "fetch", "-q", "origin", f"+refs/heads/{rama}:refs/hodor/fuente", espera=600)
     for sha in (base, commit):
         if _git_en(clon, "cat-file", "-e", f"{sha}^{{commit}}", espera=30).returncode != 0:
             raise RuntimeError(f"tu clon de {repo} no tiene el commit {sha[:12]}: el PR cambió o la rama no está en origin")
-    _accion(p, "Calcula la huella del diff")
+
+
+def _entradas_git(clon: Path, repo: str, base: str, commit: str) -> list:
     r = _git_en(clon, "diff", "--raw", "--no-renames", "-z", "--abbrev=40", "--no-ext-diff", base, commit, espera=120)
     if r.returncode != 0:
         raise RuntimeError(f"git diff en {repo} falló: {(r.stderr or b'').decode('utf-8', 'replace').strip()[:200]}")
@@ -308,11 +301,11 @@ def armar_local(p: dict, carpeta: Path) -> None:
         antes, despues = (campos[2] if campos[2] != cero else ""), (campos[3] if campos[3] != cero else "")
         entradas.append({"ruta": ruta, "ruta_antes": ruta if antes else "", "antes": antes, "despues": despues})
         i += 2
-    huella = huella_local(entradas)
-    if huella["sha"] != enc.get("diff_sha") or huella["archivos"] != enc.get("archivos"):
-        raise RuntimeError(f"la huella del diff en tu máquina ({huella['sha'][:10]}, {huella['archivos']} archivos) no coincide con la de "
-                           f"Hodor ({str(enc.get('diff_sha'))[:10]}, {enc.get('archivos')}): no analizo un código distinto al del PR")
-    _accion(p, f"Baja {len(entradas)} archivo{'s' if len(entradas) != 1 else ''} de tu clon")
+    return entradas
+
+
+def _escribir_pr(clon: Path, raiz: Path, entradas: list) -> str:
+    import difflib
     parches = []
     for d in sorted(entradas, key=lambda x: x["ruta"])[:80]:
         antes, despues = _blob(clon, d["antes"]), _blob(clon, d["despues"])
@@ -325,21 +318,48 @@ def armar_local(p: dict, carpeta: Path) -> None:
     raiz.mkdir(parents=True, exist_ok=True)
     diff = "".join(parches)
     (raiz / "diff.patch").write_text(diff, encoding="utf-8")
-    pr_json = raiz / "pr.json"
-    try:
-        datos = json.loads(pr_json.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        datos = {}
+    return diff
+
+
+def _endpoints_sin_gateway(diff: str, repo: str, otros: list) -> list:
     publicos = []
     for bloque in re.split(r"(?m)^--- a/", diff):
         cabeza = bloque.split("\n", 1)[0]
         for linea in MAPEO_RE.findall(bloque) and re.findall(r"(?m)^[+-].*@(?:Get|Post|Put|Delete|Patch|Request)Mapping.*$", bloque):
             if "iuse" not in cabeza.lower() and "iuse" not in linea.lower():
                 publicos.append(linea)
-    repos = {o.get("repo") for o in datos.get("otros_prs") or []}
-    aviso = "El PR agrega o quita endpoints y no veo un PR de ms-config-api-gateway para la ruta en el API Gateway."
-    if publicos and "ms-config-api-gateway" not in repos and not repo.startswith("ms-config") and aviso not in (datos.get("contexto_detectado") or []):
-        datos["contexto_detectado"] = [*(datos.get("contexto_detectado") or []), aviso]
+    repos = {o.get("repo") for o in otros or []}
+    if publicos and "ms-config-api-gateway" not in repos and not repo.startswith("ms-config"):
+        return ["El PR agrega o quita endpoints y no veo un PR de ms-config-api-gateway para la ruta en el API Gateway."]
+    return []
+
+
+def armar_local(p: dict, carpeta: Path) -> None:
+    """El contexto del PR armado en tu máquina con tu git: los archivos antes y después, el diff y dónde se usa lo que
+    cambia. Hodor ya dejó en el paquete la instrucción, las reglas y la huella del diff; si tu git da otra huella, no se
+    analiza."""
+    enc = json.loads((carpeta / "ENCARGO.json").read_text(encoding="utf-8"))
+    repo, base, commit, destino = enc["repo"], enc["base"], enc["commit"], enc.get("destino") or "master"
+    raiz = carpeta / enc["carpeta"]
+    clon = _clon_del_repo(repo)
+    _progreso(p, "armando")
+    _traer(p, clon, repo, enc.get("rama") or "", destino, base, commit)
+    _accion(p, "Calcula la huella del diff")
+    entradas = _entradas_git(clon, repo, base, commit)
+    huella = huella_local(entradas)
+    if huella["sha"] != enc.get("diff_sha") or huella["archivos"] != enc.get("archivos"):
+        raise RuntimeError(f"la huella del diff en tu máquina ({huella['sha'][:10]}, {huella['archivos']} archivos) no coincide con la de "
+                           f"Hodor ({str(enc.get('diff_sha'))[:10]}, {enc.get('archivos')}): no analizo un código distinto al del PR")
+    _accion(p, f"Baja {len(entradas)} archivo{'s' if len(entradas) != 1 else ''} de tu clon")
+    diff = _escribir_pr(clon, raiz, entradas)
+    pr_json = raiz / "pr.json"
+    try:
+        datos = json.loads(pr_json.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        datos = {}
+    nuevos = [a for a in _endpoints_sin_gateway(diff, repo, datos.get("otros_prs")) if a not in (datos.get("contexto_detectado") or [])]
+    if nuevos:
+        datos["contexto_detectado"] = [*(datos.get("contexto_detectado") or []), *nuevos]
         pr_json.write_text(json.dumps(datos, ensure_ascii=False, indent=1), encoding="utf-8")
     _accion(p, "Busca en tu clon dónde se usa lo que cambia")
     try:
@@ -349,6 +369,385 @@ def armar_local(p: dict, carpeta: Path) -> None:
         _accion(p, f"Contexto listo · {v.get('usados', 0)} símbolos" if v.get("ok") else f"Sin vecindario: {v.get('motivo', '')}"[:100])
     except Exception as err:  # noqa: BLE001 — sin vecindario el análisis sigue, como en Hodor
         log(f"#{p['pr']}: vecindario: {str(err)[:200]}")
+
+
+# ── Worker 1.5: el PR se lee, se valida y se arma en tu máquina ──
+
+class Rechazo(RuntimeError):
+    """Lo que impide analizar el PR o lo que le falta a tu máquina: no se reintenta y lo ves en el panel tal cual."""
+
+
+TICKET = {"sin_ticket": 0.0}
+TICKETS = TRABAJO / "tickets"
+_SIN_SESION = re.compile(r"Token has expired|token.*expired|SSO session|sso login|ExpiredToken|Unable to locate credentials|"
+                         r"Error loading SSO Token|UnrecognizedClientException|security token included in the request is (expired|invalid)", re.I)
+
+
+def _aws(*args: str, espera: int = 90) -> dict:
+    exe = shutil.which("aws")
+    if not exe:
+        raise Rechazo("no encuentro el AWS CLI en tu máquina: instálalo (aws --version) y vuelve a pedir el análisis")
+    orden = [exe, *args, "--region", "us-east-1", "--output", "json"]
+    if CONFIG.get("aws_perfil"):
+        orden += ["--profile", str(CONFIG["aws_perfil"])]
+    try:
+        r = subprocess.run(orden, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=espera,
+                           creationflags=SIN_VENTANA)
+    except subprocess.TimeoutExpired:
+        raise Rechazo(f"AWS no respondió en {espera} s ({args[1] if len(args) > 1 else args[0]}): revisa tu conexión y vuelve a pedirlo") from None
+    if r.returncode != 0:
+        error = (r.stderr or r.stdout or "").strip()
+        if _SIN_SESION.search(error):
+            raise Rechazo("tu sesión de AWS venció: corre `aws sso login` y vuelve a pedir el análisis")
+        if "AccessDenied" in error:
+            raise Rechazo(f"tu usuario de AWS no tiene permiso para {args[1] if len(args) > 1 else args[0]}: {error[-200:]}")
+        raise RuntimeError(f"aws {' '.join(args[:2])} falló: {error[-300:]}")
+    return json.loads(r.stdout or "{}")
+
+
+def detalle_pr(numero: str) -> dict:
+    pr = _aws("codecommit", "get-pull-request", "--pull-request-id", str(numero)).get("pullRequest") or {}
+    destino = (pr.get("pullRequestTargets") or [{}])[0]
+    sin_refs = lambda ref: re.sub(r"^refs/heads/", "", str(ref or ""))  # noqa: E731
+    return {"id": str(numero), "revision": pr.get("revisionId") or "", "repo": destino.get("repositoryName") or "",
+            "titulo": pr.get("title") or "", "estado": (pr.get("pullRequestStatus") or "").upper(),
+            "mergeado": bool((destino.get("mergeMetadata") or {}).get("isMerged")),
+            "rama": sin_refs(destino.get("sourceReference")), "destino": sin_refs(destino.get("destinationReference")),
+            "commit": destino.get("sourceCommit") or "", "base": destino.get("mergeBase") or destino.get("destinationCommit") or "",
+            "autor": str(pr.get("authorArn") or "").split("/")[-1].lower(), "reglas": pr.get("approvalRules") or []}
+
+
+def puertas_aws(info: dict) -> str:
+    """Las reglas de aprobación que solo puede cumplir una máquina (el build y Sonar): si alguna falta, no se analiza."""
+    ev = _aws("codecommit", "evaluate-pull-request-approval-rules", "--pull-request-id", info["id"],
+              "--revision-id", info["revision"]).get("evaluation") or {}
+    pendientes = set(ev.get("approvalRulesNotSatisfied") or [])
+    automaticas = []
+    for r in info.get("reglas") or []:
+        if r.get("approvalRuleName") not in pendientes:
+            continue
+        try:
+            miembros = [m for st in json.loads(r.get("approvalRuleContent") or "{}").get("Statements") or []
+                        for m in st.get("ApprovalPoolMembers") or []]
+        except ValueError:
+            continue
+        if miembros and all("assumed-role/" in m and "AWSReservedSSO" not in m for m in miembros):
+            automaticas.append(r["approvalRuleName"])
+    if automaticas:
+        return (f"#{info['id']} todavía no se puede analizar: falta la aprobación automática de {', '.join(sorted(automaticas))} "
+                "(el build o Sonar todavía no pasan). Espera a que terminen, o corrígelos y haz push")
+    return ""
+
+
+def _conflictos(clon: Path, info: dict) -> list:
+    res = _aws("codecommit", "get-merge-conflicts", "--repository-name", info["repo"], "--destination-commit-specifier", info["destino"],
+               "--source-commit-specifier", info["commit"], "--merge-option", "THREE_WAY_MERGE", "--max-conflict-files", "20",
+               "--conflict-detail-level", "LINE_LEVEL")
+    if res.get("mergeable", True):
+        return []
+    archivos = [c.get("filePath", "") for c in res.get("conflictMetadataList") or []] or ["(sin detalle)"]
+    r = _git_en(clon, "merge-tree", "--write-tree", "--name-only", "refs/hodor/destino", info["commit"], espera=120)
+    if r.returncode == 0:
+        return []
+    if r.returncode == 1:
+        reales = []
+        for linea in r.stdout.decode("utf-8", "replace").splitlines()[1:]:
+            if not linea.strip():
+                break
+            reales.append(linea.strip())
+        return reales or archivos
+    return archivos
+
+
+def pedir_v15(url: str) -> dict | None:
+    """El botón Analizar del panel. Devuelve None si Hodor todavía no tiene el ticket (cae al pedido de la 4.x)."""
+    m = re.search(r"/repositories/([^/\s]+)/pull-requests/(\d+)", url or "") or re.fullmatch(r"\s*#?(\d+)\s*", url or "")
+    if not m:
+        return {"error": "pega el link del PR de CodeCommit"}
+    numero = m.group(m.lastindex)
+    if time.time() - TICKET["sin_ticket"] < 10 * 60:
+        return None
+    try:
+        info = detalle_pr(numero)
+    except Rechazo as err:
+        return {"error": str(err)}
+    except Exception as err:  # noqa: BLE001
+        return {"error": f"no pude leer #{numero} en CodeCommit: {str(err)[:200]}"}
+    if info["estado"] != "OPEN" or info["mergeado"]:
+        return {"error": f"#{numero} ya no está abierto"}
+    try:
+        motivo = puertas_aws(info)
+    except Rechazo as err:
+        return {"error": str(err)}
+    except Exception as err:  # noqa: BLE001
+        return {"error": f"no pude revisar las reglas de aprobación de #{numero}: {str(err)[:200]}"}
+    if motivo:
+        return {"error": motivo}
+    res = _api("POST", "/api/v3/ticket", {"pr": numero, "info": {k: v for k, v in info.items() if k != "reglas"}})
+    if res.get("status") == 404 and "no existe" in str(res.get("error") or ""):
+        TICKET["sin_ticket"] = time.time()
+        return None
+    if res.get("error"):
+        return {"error": res["error"]}
+    _guardar_ticket(res)
+    atento()
+    log(f"#{numero}: ticket {res.get('fila')} de Hodor, lo analiza este worker")
+    return {"ok": True, "pr": numero, "fila": res.get("fila")}
+
+
+def _guardar_ticket(res: dict) -> None:
+    TICKETS.mkdir(parents=True, exist_ok=True)
+    (TICKETS / f"{int(res['fila'])}.json").write_text(json.dumps(res, ensure_ascii=False), encoding="utf-8")
+    for viejo in TICKETS.glob("*.json"):
+        if time.time() - viejo.stat().st_mtime > 7 * 86400:
+            viejo.unlink(missing_ok=True)
+
+
+def _ticket(p: dict) -> dict:
+    ruta = TICKETS / f"{int(p['id'])}.json"
+    try:
+        guardado = json.loads(ruta.read_text(encoding="utf-8"))
+        if guardado.get("desafio") == p.get("desafio"):
+            return guardado
+    except (OSError, ValueError):
+        pass
+    res = _api("GET", f"/api/v3/ticket?id={int(p['id'])}")
+    if res.get("error"):
+        raise RuntimeError(f"no pude pedirle a Hodor el contexto del análisis: {res['error']}")
+    _guardar_ticket(res)
+    return res
+
+
+_CTX = threading.local()
+_MODULOS: dict = {}
+_MODULOS_CANDADO = threading.Lock()
+
+
+def _cabeza_git(rama: str) -> str:
+    clon = _CTX.clon
+    ref = f"refs/hodor/r/{rama}"
+    if rama not in _CTX.traidas:
+        r = _git_en(clon, "fetch", "-q", "origin", f"+refs/heads/{rama}:{ref}", espera=600)
+        if r.returncode != 0:
+            raise RuntimeError(f"git fetch de {rama} falló: {(r.stderr or b'').decode('utf-8', 'replace').strip()[:200]}")
+        _CTX.traidas.add(rama)
+    return _git_en(clon, "rev-parse", ref, espera=30).stdout.decode().strip()
+
+
+def _blob_en_git(commit: str, ruta: str) -> str | None:
+    r = _git_en(_CTX.clon, "rev-parse", "--verify", "-q", f"{commit}:{ruta}", espera=30)
+    return r.stdout.decode().strip() or None if r.returncode == 0 else None
+
+
+def _detalle_ctx(numero: str) -> dict:
+    numero = str(numero)
+    if numero not in _CTX.detalles:
+        info = detalle_pr(numero)
+        clon = _CTX.clon
+        for sha, rama in ((info["base"], info["destino"]), (info["commit"], info["rama"])):
+            if sha and _git_en(clon, "cat-file", "-e", f"{sha}^{{commit}}", espera=30).returncode != 0 and rama:
+                _git_en(clon, "fetch", "-q", "origin", f"+refs/heads/{rama}:refs/hodor/r/{rama}", espera=600)
+            if sha and _git_en(clon, "cat-file", "-e", f"{sha}^{{commit}}", espera=30).returncode != 0:
+                raise RuntimeError(f"tu clon no tiene el commit {sha[:12]} de #{numero}")
+        _CTX.detalles[numero] = info
+    return _CTX.detalles[numero]
+
+
+def _modulos_hodor(reglas_dir: Path) -> dict:
+    """verificador y comparar_ramas, tal como vienen en el paquete de reglas (con su huella), leyendo CodeCommit desde tu
+    clon: los blobs de git son los mismos que los de CodeCommit."""
+    import importlib.util
+    import types
+    with _MODULOS_CANDADO:
+        clave = str(reglas_dir)
+        if clave in _MODULOS:
+            return _MODULOS[clave]
+        if "codecommit" not in sys.modules or not getattr(sys.modules["codecommit"], "_hodor_local", False):
+            cc = types.ModuleType("codecommit")
+            cc._hodor_local = True
+            cc.AwsError = RuntimeError
+            cc.detalle = _detalle_ctx
+            cc.diferencias = lambda _repo, a, b: _entradas_git(_CTX.clon, _repo, a, b)
+            cc.lineas = lambda _repo, blob: _blob(_CTX.clon, blob)
+            cc.cabeza = lambda _repo, rama: _cabeza_git(rama)
+            dic = types.ModuleType("dictamen")
+            dic._blob_en = lambda _repo, commit, ruta: _blob_en_git(commit, ruta)
+            sys.modules["codecommit"], sys.modules["dictamen"] = cc, dic
+        salida = {}
+        for nombre in ("comparar_ramas", "verificador"):
+            archivo = reglas_dir / "hodor" / f"{nombre}.py"
+            if not archivo.is_file():
+                raise Rechazo(f"las reglas de Hodor no traen {nombre}.py: avísale al revisor")
+            spec = importlib.util.spec_from_file_location(f"hodor_{nombre}_{reglas_dir.name[:12]}", archivo)
+            modulo = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(modulo)
+            salida[nombre] = modulo
+        _MODULOS[clave] = salida
+        return salida
+
+
+def _ramas_v15(mods: dict, info: dict, ramas: list) -> dict:
+    """Lo que el PR trae y la rama anterior no. No frena el análisis: el PR se analiza igual, pero no es aprobable y el
+    revisor lo ve marcado."""
+    salida = {"destino": info.get("destino"), "ramas": {}, "ok": True}
+    for rama in ramas:
+        r = mods["comparar_ramas"].contenido_en(info["id"], rama)
+        faltan = [{"ruta": f.get("ruta"), "lineas": len(f.get("lineas") or []) if isinstance(f.get("lineas"), list) else f.get("lineas"),
+                   "motivo": f.get("motivo"), "ejemplo": [str(x)[:160] for x in (f.get("lineas") or [])[:3]] if isinstance(f.get("lineas"), list) else [],
+                   "siguen": [str(x)[:160] for x in (f.get("borradas") or [])[:2]]} for f in (r.get("faltan") or [])][:12]
+        salida["ramas"][rama] = {"ok": bool(r.get("ok")), "completo": bool(r.get("completo")), "faltan": faltan}
+        salida["ok"] = salida["ok"] and bool(r.get("ok"))
+    return salida
+
+
+def _igual_v15(mods: dict, info: dict, candidatos: list) -> str:
+    for c in candidatos or []:
+        try:
+            otro = _detalle_ctx(c["pr"])
+            if c.get("destino") == "master" and not otro.get("mergeado"):
+                continue
+            if mods["comparar_ramas"].mismo_diff(info["id"], c["pr"]).get("igual"):
+                return str(c["pr"])
+        except Exception as err:  # noqa: BLE001 — sin poder comparar, se analiza
+            log(f"#{info['id']}: no pude comparar con #{c.get('pr')}: {str(err)[:160]}")
+    return ""
+
+
+def _rangos_ronda(clon: Path, repo: str, antes: str, commit: str) -> dict:
+    import difflib
+    if not antes or _git_en(clon, "cat-file", "-e", f"{antes}^{{commit}}", espera=30).returncode != 0:
+        return {}
+    lineas = {}
+    for d in _entradas_git(clon, repo, antes, commit):
+        viejo, nuevo = _blob(clon, d["antes"]), _blob(clon, d["despues"])
+        rangos = [[j1 + 1, max(j1 + 1, j2)] for op, _i1, _i2, j1, j2 in difflib.SequenceMatcher(None, viejo, nuevo, autojunk=False).get_opcodes()
+                  if op != "equal"]
+        if rangos:
+            lineas[d["ruta"]] = rangos
+    return lineas
+
+
+def _texto_ronda(ronda: dict) -> str:
+    cambios = "\n".join(f"- {ruta}: " + ", ".join(f"{a}-{b}" for a, b in rangos[:30]) for ruta, rangos in list(ronda["lineas"].items())[:60])
+    previos = "\n".join(f"- [{p['severidad']}] {p['titulo']} ({p.get('archivo') or '?'}:{p.get('linea') or '?'})"
+                         + (" — retirado en el debate" if p.get("retirado") else "") for p in ronda.get("previos") or []) or "- (ninguno)"
+    return (f"\n\nRONDA {ronda.get('numero', 2)} de este PR. La ronda anterior analizó el commit {str(ronda['commit_anterior'])[:12]} y encontró:\n"
+            f"{previos}\n\nEl dev cambió desde entonces estas líneas (archivo: rangos del commit actual):\n{cambios or '- (ninguna)'}\n\n"
+            "Reglas de esta ronda: verifica cada hallazgo anterior; si sigue, repórtalo con el mismo título, archivo y línea "
+            "actual; si se corrigió, no lo repitas; no repitas los retirados en el debate. Lo nuevo solo cuenta si está en las "
+            "líneas cambiadas o lo introdujo el cambio. Si ves un problema en código que no cambió, igual repórtalo con su "
+            "archivo y línea exactos: Hodor lo marca fuera de alcance y no le cuenta al dev, salvo un IDOR, que siempre cuenta.")
+
+
+_INYECCION = re.compile(r"^\s*private\s+final\s+(?!static\b)[\w.<>?,\s\[\]]+?\s+(\w+)\s*;")
+_COMPONENTE = re.compile(r"^\s*@(Service|Component|RestController|Controller|Repository|Configuration|Aspect)\b", re.M)
+
+
+def _inyecciones_v15(clon: Path, entradas: list) -> list:
+    salida = []
+    for d in entradas:
+        ruta = d.get("ruta") or ""
+        if not ruta.endswith(".java") or "/src/test/" in f"/{ruta}" or not d.get("despues") or d.get("antes"):
+            continue
+        lineas = _blob(clon, d["despues"])
+        if not _COMPONENTE.search("\n".join(lineas)):
+            continue
+        deps = [m.group(1) for m in (_INYECCION.match(x) for x in lineas) if m]
+        if len(deps) > 4:
+            salida.append({"archivo": ruta, "inyecciones": len(deps), "dependencias": deps})
+    return salida
+
+
+def preparar_v15(p: dict) -> tuple:
+    """Todo lo que en la 4.x hacía la máquina del revisor, aquí: puertas, ramas anteriores, «igual», verificador y la
+    carpeta del análisis. Devuelve (carpeta, pedido, sello parcial) o (None, motivo, None) si el PR no se analiza."""
+    t = _ticket(p)
+    ctx = t.get("contexto") or {}
+    if not p.get("reglas_sha"):
+        raise Rechazo("Hodor todavía no publicó las reglas para la 1.5: avísale al revisor")
+    _progreso(p, "armando")
+    _accion(p, "Lee el PR en CodeCommit")
+    info = detalle_pr(p["pr"])
+    if info["commit"] != p.get("commit") or info["base"] != p.get("base"):
+        raise Rechazo(f"#{p['pr']} cambió desde que lo pediste (commit {info['commit'][:8]}): pídelo de nuevo")
+    if info["estado"] != "OPEN" or info["mergeado"]:
+        raise Rechazo(f"#{p['pr']} ya no está abierto")
+    clon = _clon_del_repo(info["repo"])
+    _traer(p, clon, info["repo"], info["rama"], info["destino"], info["base"], info["commit"])
+    _accion(p, "Calcula la huella del diff")
+    entradas = _entradas_git(clon, info["repo"], info["base"], info["commit"])
+    huella = huella_local(entradas)
+    codigo = sum(1 for d in entradas if d["ruta"].startswith("src/main/"))
+    hojas = -(-codigo // 10)
+    tope = int(ctx.get("max_hojas") or 5)
+    if hojas > tope and not ctx.get("excepcion_hojas"):
+        raise Rechazo(f"#{p['pr']} tiene {codigo} archivos de código ({hojas} hojas sin contar tests); el máximo es {tope} hojas. "
+                      "Pártelo en PRs más chicos")
+    _accion(p, f"Revisa conflictos con {info['destino']}")
+    choques = _conflictos(clon, info)
+    if choques:
+        raise Rechazo(f"#{p['pr']} tiene conflictos con {info['destino']} ({', '.join(choques[:5])}): resuélvelos y haz push")
+    reglas_dir = reglas(p["reglas_sha"])
+    mods = _modulos_hodor(reglas_dir)
+    _CTX.clon, _CTX.detalles, _CTX.traidas = clon, {info["id"]: info}, set()
+    ramas = {"destino": info["destino"], "ramas": {}, "ok": True}
+    if ctx.get("ramas_anteriores"):
+        _accion(p, "Compara con " + " y ".join(ctx["ramas_anteriores"]))
+        ramas = _ramas_v15(mods, info, ctx["ramas_anteriores"])
+    if ctx.get("candidatos_igual"):
+        _accion(p, "Busca si ya se analizó el mismo cambio en la rama anterior")
+        igual = _igual_v15(mods, info, ctx["candidatos_igual"])
+        if igual:
+            res = _api("POST", "/api/v3/ticket", {"pr": info["id"], "info": {k: v for k, v in info.items() if k != "reglas"}, "igual": {"pr": igual}})
+            if res.get("error"):
+                raise RuntimeError(f"Hodor no tomó el «igual a #{igual}»: {res['error']}")
+            return None, res.get("mensaje") or f"igual a #{igual}", None
+    _accion(p, "Revisa las reglas que no necesitan IA")
+    violaciones = mods["verificador"].verificar(info)
+    if violaciones:
+        raise Rechazo(mods["verificador"].texto(violaciones))
+    carpeta = TRABAJO / f"pr{p['pr']}-{p['id']}"
+    shutil.rmtree(carpeta, ignore_errors=True)
+    if carpeta.exists():
+        carpeta = TRABAJO / f"pr{p['pr']}-{p['id']}-{int(time.time())}"
+    raiz = carpeta / ".revisiones" / f"pr{p['pr']}"
+    _accion(p, f"Baja {len(entradas)} archivo{'s' if len(entradas) != 1 else ''} de tu clon")
+    diff = _escribir_pr(clon, raiz, entradas)
+    otros = (ctx.get("pr_json") or {}).get("otros_prs") or []
+    detectado = _endpoints_sin_gateway(diff, info["repo"], otros)
+    ronda = ctx.get("ronda")
+    ronda_lineas = None
+    if ronda:
+        ronda_lineas = _rangos_ronda(clon, info["repo"], ronda.get("commit_anterior") or "", info["commit"])
+    datos = {**{k: v for k, v in info.items() if k != "reglas"}, "archivos": [d["ruta"] for d in entradas][:80],
+             **(ctx.get("pr_json") or {}), "contexto_detectado": detectado, "trazabilidad": ramas,
+             "inyecciones": _inyecciones_v15(clon, entradas), "repo_completo": None}
+    if ronda and ronda_lineas is not None:
+        datos["cambios_desde_revision_anterior"] = {r: [n for a, b in rangos for n in range(a, b + 1)][:400] for r, rangos in ronda_lineas.items()}
+    (raiz / "pr.json").write_text(json.dumps(datos, ensure_ascii=False, indent=1), encoding="utf-8")
+    if ctx.get("historia_md"):
+        (raiz / "historia.md").write_text(ctx["historia_md"], encoding="utf-8")
+    vec = {"ok": False}
+    _accion(p, "Busca en tu clon dónde se usa lo que cambia")
+    try:
+        import vecindario
+        vecindario.espejo = lambda _repo, _rama: (clon, "refs/hodor/destino")
+        inicio = time.time()
+        vec = {**vecindario.armar(info["repo"], info["destino"], diff, raiz), "segundos": round(time.time() - inicio, 1)}
+    except Exception as err:  # noqa: BLE001 — sin vecindario el análisis sigue
+        vec = {"ok": False, "motivo": str(err)[:160]}
+        log(f"#{p['pr']}: vecindario: {str(err)[:200]}")
+    instruccion = str(ctx.get("instruccion") or "")
+    pedido = instruccion + (_texto_ronda({**ronda, "lineas": ronda_lineas or {}}) if ronda else "")
+    (carpeta / "PEDIDO.txt").write_text(pedido, encoding="utf-8")
+    shutil.copytree(reglas_dir, carpeta, dirs_exist_ok=True)
+    lineas = sum(1 for x in diff.splitlines() if x[:1] in "+-" and x[:3] not in ("+++", "---"))
+    sello = {"commit": info["commit"], "base": info["base"], "huella_diff": huella["sha"], "archivos": huella["archivos"],
+             "instruccion_sha": hashlib.sha256(instruccion.encode("utf-8")).hexdigest(),
+             "ronda_lineas": ronda_lineas if ronda else None,
+             "contexto": {"lineas": lineas, "vecindario": {k: vec.get(k) for k in ("ok", "motivo", "usados", "segundos") if k in vec},
+                          "contexto_detectado": detectado, "ramas": ramas}}
+    return carpeta, pedido, sello
 
 
 def bajar(p: dict) -> Path:
@@ -375,11 +774,20 @@ def bajar(p: dict) -> Path:
 
 
 def revisar(p: dict) -> None:
-    log(f"#{p['pr']} ({p['repo']}): bajando el paquete")
-    _progreso(p, "bajando")
-    carpeta = bajar(p)
-    if (carpeta / "ENCARGO.json").exists():
-        armar_local(p, carpeta)
+    sello_v15 = None
+    if p.get("v15"):
+        log(f"#{p['pr']} ({p['repo']}): preparando en esta máquina")
+        carpeta, pedido_v15, sello_v15 = preparar_v15(p)
+        if carpeta is None:
+            log(f"#{p['pr']}: {pedido_v15}")
+            _progreso(p, "listo")
+            return
+    else:
+        log(f"#{p['pr']} ({p['repo']}): bajando el paquete")
+        _progreso(p, "bajando")
+        carpeta = bajar(p)
+        if (carpeta / "ENCARGO.json").exists():
+            armar_local(p, carpeta)
     _progreso(p, "preparando")
     ai_sel = preparar_ai_context(carpeta, str(p.get("repo") or ""))
     ai = (ai_sel or {}).get("commit")
@@ -395,7 +803,8 @@ def revisar(p: dict) -> None:
     r = MOTORES[proveedor](p, carpeta, pedido, modelo, inicio)
     _progreso(p, "enviando")
     final, sesion, turnos, costo = r["final"], r["sesion"], r["turnos"], r["costo"]
-    sello = {"fila": p["id"], "pr": str(p["pr"]), "paquete_sha": p["paquete_sha"], "reglas_sha": p.get("reglas_sha") or "",
+    sello = {"fila": p["id"], "pr": str(p["pr"]), **({"paquete_sha": p["paquete_sha"]} if not sello_v15 else sello_v15),
+             "reglas_sha": p.get("reglas_sha") or "",
              "desafio": p["desafio"], "sesion": sesion,
              "turnos": turnos, "segundos": int(time.time() - inicio), "version": VERSION, "kit": huella_kit(),
              "proveedor": proveedor, "modelo": modelo, "ai_context": ai,
@@ -1225,7 +1634,10 @@ _PING = {"corriendo": False, "version_en": 0.0, "version_nueva": None}
 def num_version(texto: str) -> tuple:
     import re
     m = re.search(r"(\d+(?:\.\d+)*)", texto or "")
-    return tuple(int(x) for x in m.group(1).split(".")) if m else ()
+    if not m:
+        return ()
+    partes = tuple(int(x) for x in m.group(1).split("."))
+    return ((partes[0] - 1) * 100 + partes[1],) + partes[2:] if len(partes) == 4 else partes
 
 
 def _ping() -> None:
@@ -1373,6 +1785,12 @@ def _correr(p: dict, previos: int) -> None:
         _progreso(p, "listo")
         with _DB_CANDADO, _db() as con:
             con.execute("DELETE FROM fallos WHERE fila = ?", (fila,))
+    except Rechazo as err:
+        _progreso(p, "error", error=str(err)[:200])
+        log(f"#{p.get('pr')}: no se analiza: {err}")
+        res = _api("POST", "/api/v3/fallo", {"id": p["id"], "error": str(err)[:2000], "intentos": 0, "rechazo": True})
+        if res.get("error"):
+            log(f"#{p.get('pr')}: no pude avisarle a Hodor: {res['error']}")
     except Exception as err:  # noqa: BLE001 — se reintenta en la próxima vuelta, hasta el tope
         donde = traceback.extract_tb(err.__traceback__)[-1] if err.__traceback__ else None
         detalle = f"{err} (en {Path(donde.filename).name}:{donde.lineno})" if donde else str(err)
@@ -1380,7 +1798,7 @@ def _correr(p: dict, previos: int) -> None:
         _progreso(p, "error", error=str(err)[:200])
         with _DB_CANDADO, _db() as con:
             con.execute("INSERT OR REPLACE INTO fallos(fila, pr, sha, n, error, en) VALUES(?,?,?,?,?,?)",
-                        (fila, str(p.get("pr")), p.get("paquete_sha") or "", n, detalle[:1000], time.time()))
+                        (fila, str(p.get("pr")), p.get("paquete_sha") or p.get("desafio") or "", n, detalle[:1000], time.time()))
         log(f"#{p.get('pr')}: falló ({n} de {TOPE_FALLOS}): {detalle[:300]}")
         ultimas = _salida()
         salida = f" · últimas líneas: {' | '.join(ultimas)[-400:]}" if ultimas else ""
@@ -1423,7 +1841,7 @@ def una_vuelta(esperar: bool = False) -> int:
             if len(_CORRIENDO) >= tope_agentes():
                 espera.append(str(p.get("pr")))
                 continue
-        previos = _fallos(fila, p.get("paquete_sha") or "")
+        previos = _fallos(fila, p.get("paquete_sha") or p.get("desafio") or "")
         if previos >= TOPE_FALLOS:
             with _DB_CANDADO, _db() as con:
                 r = con.execute("SELECT error FROM fallos WHERE fila = ?", (fila,)).fetchone()
@@ -2523,7 +2941,8 @@ class Panel(BaseHTTPRequestHandler):
             return self._json(200, {"error": f"Estás viendo como {VER_COMO['nombre'] or VER_COMO['correo']}: solo lectura"})
         if self.path == "/api/pedir":
             atento()
-            return self._json(200, _api("POST", "/api/v3/pedir", {"url": cuerpo.get("url", "")}))
+            nuevo = pedir_v15(str(cuerpo.get("url", "")))
+            return self._json(200, nuevo if nuevo is not None else _api("POST", "/api/v3/pedir", {"url": cuerpo.get("url", "")}))
         if self.path == "/api/enviar":
             atento()
             return self._json(200, _api("POST", "/api/v3/entregar", {"id": cuerpo.get("id")}))

@@ -158,6 +158,22 @@ try { const t = localStorage.getItem("hodor-tema"); if (t === "claro" || t === "
   .clave-link:hover, .clave-link:focus-visible { text-decoration: underline; }
   .nodo .acciones { margin-top: 2px; display: flex; gap: 6px; flex-wrap: wrap; }
   .cajon-motivo { width: min(640px, 100vw); }
+  .rechazo { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 14px 16px; border-radius: 12px; border: 1px solid var(--linea); background: var(--caja); }
+  .rechazo .icono-mal { box-sizing: border-box; width: 36px; height: 36px; border-radius: 10px; background: var(--bad-f); color: var(--bad-t); display: grid; place-items: center; flex-shrink: 0; }
+  .rechazo .cuerpo { flex: 1 1 280px; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+  .rechazo .cuerpo b { font-weight: 500; }
+  .rechazo .cuerpo span { font-size: 13px; color: var(--suave); }
+  .falta-arch { border: 1px solid var(--linea); border-radius: 12px; overflow: hidden; }
+  .falta-arch > div { padding: 11px 14px; display: flex; flex-direction: column; gap: 8px; }
+  .falta-arch > div + div { border-top: 1px solid var(--linea); }
+  .falta-arch .nombre { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+  .falta-arch .nombre .mono:first-child { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .falta-arch .lineas { border-radius: 8px; background: var(--hundido); font-size: 12px; line-height: 1.6; overflow-x: auto; }
+  .falta-arch .lineas div { padding: 3px 10px; white-space: pre; }
+  .falta-arch .lineas .mas { background: var(--ok-f); color: var(--texto); }
+  .falta-arch .lineas .menos { background: var(--bad-f); color: var(--texto); }
+  .falta-arch .lineas .nota { color: var(--tenue); white-space: normal; }
+  .rot-motivo { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--tenue); }
   .motivo-texto { display: flex; flex-direction: column; gap: 10px; font-size: 13.5px; line-height: 1.55; color: var(--suave); overflow-wrap: anywhere; }
   .motivo-texto p { margin: 0; padding: 10px 12px; background: var(--hondo); border: 1px solid var(--linea); border-radius: 8px; }
   .nodo.t-tu { background: var(--warn-f); border-color: var(--warn); } .nodo.t-tu .que { color: var(--warn); }
@@ -199,11 +215,11 @@ try { const t = localStorage.getItem("hodor-tema"); if (t === "claro" || t === "
   .aviso-pedido.t-bad { border-color: var(--bad); background: var(--bad-f); }
   .pasos-an { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; width: 100%; }
   .pasos-an li { display: grid; grid-template-columns: 22px 1fr auto; gap: 10px; align-items: start; }
-  .pasos-an .marca { box-sizing: border-box; width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; margin-top: 1px; border: 1.5px solid var(--linea-3); color: var(--tenue); line-height: 0; }
-  .pasos-an .marca svg { width: 11px; height: 11px; display: block; }
+  .pasos-an .marca { position: relative; box-sizing: border-box; width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; margin-top: 1px; border: 1.5px solid var(--linea-3); color: var(--tenue); line-height: 0; }
+  .pasos-an .marca svg { width: 12px; height: 12px; display: block; }
   .pasos-an li.hecho .marca { border-color: var(--ok); background: var(--ok); color: var(--fondo); }
-  .pasos-an li.ahora .marca { border-color: var(--acc); color: var(--acc); }
-  .pasos-an li.ahora .marca .giro { box-sizing: border-box; display: block; width: 10px; height: 10px; margin: 0; border-width: 1.5px; vertical-align: 0; }
+  .pasos-an li.ahora .marca { border-color: var(--linea-3); color: var(--acc); }
+  .pasos-an li.ahora .marca .giro { position: absolute; inset: -1.5px; box-sizing: border-box; display: block; width: auto; height: auto; margin: 0; border: 1.5px solid transparent; border-top-color: var(--acc); border-right-color: var(--acc); vertical-align: 0; }
   .pasos-an li.mal .marca { border-color: var(--bad); background: var(--bad); color: var(--fondo); }
   .pasos-an li.luego { opacity: .55; }
   .pasos-an .tit { font-weight: 500; }
@@ -490,7 +506,7 @@ function pasosAnalisis(an, pedidoEn) {
   pasos.push({ t: listo ? "Listo: ábrelo para ver los hallazgos" : "Resultado en tu panel", donde: "", estado: listo || fase === "listo" ? "hecho" : fase === "enviando" ? "ahora" : "luego",
     det: listo && datosDe(an) ? `Puntaje ${esc(datosDe(an).puntaje)}` : fase === "enviando" ? "Enviando el resultado a Hodor" : "" });
   return `<ol class="pasos-an">${pasos.map((x) => `<li class="${x.estado}">
-      <span class="marca" aria-hidden="true">${x.estado === "hecho" ? I_OK : x.estado === "ahora" ? `<span class="giro"></span>` : x.estado === "mal" ? "!" : ""}</span>
+      <span class="marca" aria-hidden="true">${x.estado === "hecho" ? I_PASO_OK : x.estado === "ahora" ? `<span class="giro"></span>` : x.estado === "mal" ? "!" : ""}</span>
       <span><span class="tit">${esc(x.t)}</span>${x.donde ? `<span class="donde">${esc(x.donde)}</span>` : ""}${x.det ? `<span class="det">${x.det}</span>` : ""}
         ${x.acciones && x.acciones.length ? `<span class="acciones">${x.acciones.map((e) => `<span class="mono">${esc(e.t)}</span>`).join("")}</span>` : ""}</span>
       <span class="tiempo mono">${x.desde ? `<span data-reloj="${esc(x.desde)}">${reloj(x.desde)}</span>` : ""}</span>
@@ -532,6 +548,8 @@ const I_BUSCAR = ic(`<circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-
 const I_CANDADO = ic(`<rect x="5" y="11" width="14" height="10" rx="2"></rect><path d="M8 11V7a4 4 0 0 1 8 0v4"></path>`, ` width="12" height="12"`);
 const I_EXTERNO = ic(`<path d="M7 17 17 7M8 7h9v9"></path>`, ` width="12" height="12"`);
 const I_OK = ic(`<path d="M20 6 9 17l-5-5"></path>`, ` width="12" height="12"`);
+const I_PASO_OK = ic(`<path d="M5 12.5l4.5 4.5L19 7.5"></path>`, ` width="12" height="12" stroke-width="3"`);
+const I_ALERTA = ic(`<path d="M12 9v4M12 17h.01"></path><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"></path>`, ` width="18" height="18"`);
 const I_MAS = ic(`<circle cx="5" cy="12" r="1.5" fill="currentColor"></circle><circle cx="12" cy="12" r="1.5" fill="currentColor"></circle><circle cx="19" cy="12" r="1.5" fill="currentColor"></circle>`);
 const I_RECARGAR = ic(`<path d="M3 12a9 9 0 0 1 15.4-6.4L21 8"></path><path d="M21 3v5h-5"></path><path d="M21 12a9 9 0 0 1-15.4 6.4L3 16"></path><path d="M3 21v-5h5"></path>`);
 const I_ANALIZAR = ic(`<circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path><path d="M8.5 11h5M11 8.5v5"></path>`);
@@ -742,6 +760,8 @@ function avisoPedido(enHistoria) {
     sub = corriendo ? (an.historia && !enHistoria ? `También lo ves abajo, en ${an.historia}.` : "") : "El análisis terminó: ábrelo para ver los hallazgos.";
   }
   if (an && an.historia && !p.abierto) { S.abiertos.add(`mis:${an.historia}`); p.abierto = true; }
+  if (ped && ped.resultado) return tarjetaRechazo({ pr: p.pr, repo: p.repo, resultado: ped.resultado, en: ped.en },
+    `<button class="icono" style="width:26px;height:26px" data-accion="cerrar-pedido" aria-label="Quitar este aviso">${I_CERRAR}</button>`);
   return `<div class="aviso-pedido t-${tono}" role="status">
     <span class="punto" style="color:var(--${tono})" aria-hidden="true"></span>
     <span style="font-weight:500">Pediste el análisis de <span class="mono">${esc(p.repo ? `${p.repo} ` : "")}#${esc(p.pr)}</span></span>
@@ -761,7 +781,7 @@ function vistaMis() {
   S.pagina = Math.min(S.pagina, paginas);
   const visibles = grupos.slice((S.pagina - 1) * POR_PAGINA, S.pagina * POR_PAGINA);
   const pedidos = (d.pedidos || []).filter((p) => !(S.pedido && numeroPr(S.pedido.pr) === numeroPr(p.pr))).filter((p) => !p.resultado || (avisoVisto(`pedido:${p.pr}:${p.en}`, p.en) && !S.quitados.has(`pedido:${p.pr}:${p.en}`))).map((p) => p.resultado
-    ? `<div class="aviso c-bad" style="display:flex;gap:10px;align-items:flex-start"><span style="flex:1">${esc(String(p.resultado).replace(/^rechazado:\s*/, ""))}</span><button class="icono" style="width:26px;height:26px" data-cerrar-pedido="${esc(`pedido:${p.pr}:${p.en}`)}" aria-label="Quitar este aviso" title="Quitar este aviso">${I_CERRAR}</button></div>`
+    ? tarjetaRechazo(p, `<button class="icono" style="width:26px;height:26px" data-cerrar-pedido="${esc(`pedido:${p.pr}:${p.en}`)}" aria-label="Quitar este aviso" title="Quitar este aviso">${I_CERRAR}</button>`)
     : `<div class="aviso c-acc">#${esc(p.pr)}: pedido ${esc(hace(p.en))}, Hodor lo está validando…</div>`).join("");
   const ag = d.agentes || {};
   const tope = (ag.en_espera || []).length
@@ -844,6 +864,57 @@ async function irAHistoria(hu) {
   const sec = [...document.querySelectorAll("section.grupo")].find((x) => x.getAttribute("aria-label") === `Historia ${hu}`);
   if (sec) { sec.scrollIntoView({ behavior: "smooth", block: "start" }); sec.classList.add("resaltada"); setTimeout(() => sec.classList.remove("resaltada"), 2200); }
 }
+function rechazoDe(p) {
+  const crudo = String(p.resultado || "").replace(/^rechazado:\s*/, "");
+  const motivo = crudo.replace(/^#\d+\s+todavía no se puede analizar:\s*/, "");
+  const m = motivo.match(/^falta código en ([\w./-]+):\s*([\s\S]*)$/);
+  if (!m) return { resumen: motivo, archivos: [], pasos: [], rama: "" };
+  const rama = m[1];
+  const archivos = m[2].split(" · ").map((parte) => {
+    const [nombre, ...resto] = parte.split(" → ");
+    const det = resto.join(" → ");
+    const mas = Number((det.match(/\(y (\d+) más\)\s*$/) || [])[1] || 0);
+    const lineas = [];
+    for (const x of det.replace(/\(y \d+ más\)\s*$/, "").split(/;\s+/)) {
+      const quita = x.match(/^quitas `([\s\S]*?)` y .* todavía lo tiene/);
+      if (quita) lineas.push({ tipo: "menos", t: quita[1] });
+      else if (x.startsWith("`")) lineas.push({ tipo: "mas", t: x.replace(/^`/, "").replace(/`$/, "") + (x.trim().endsWith("`") ? "" : " …") });
+      else if (x.trim()) lineas.push({ tipo: "nota", t: x.trim() });
+    }
+    return { nombre: nombre.trim(), lineas, mas };
+  }).filter((a) => a.nombre);
+  return { rama, archivos,
+    resumen: `El PR trae cambios que ${rama} todavía no tiene.`,
+    pasos: [`Lleva esos cambios a ${rama} con un PR de la misma historia, o saca tu rama desde ${rama} y aplica solo lo que ya está ahí.`,
+            `Cuando ese PR quede mergeado en ${rama}, vuelve a pedir este análisis.`] };
+}
+function tarjetaRechazo(p, cerrar) {
+  const clave = `pedido:${p.pr}`;
+  if (!p.repo) p = { ...p, repo: ([...(S.datos.prs || []), ...(S.datos.analisis || [])].find((x) => String(x.pr) === String(p.pr)) || {}).repo || "" };
+  const r = rechazoDe(p);
+  const url = p.repo ? `https://us-east-1.console.aws.amazon.com/codesuite/codecommit/repositories/${p.repo}/pull-requests/${p.pr}` : "";
+  S.motivos[clave] = { titulo: `${p.repo ? `${p.repo} ` : ""}#${p.pr}`, repo: "No se pudo analizar", html: "", url, rechazo: r };
+  return `<div class="rechazo" role="status">
+    <span class="icono-mal" aria-hidden="true">${I_ALERTA}</span>
+    <div class="cuerpo"><b>No pude analizar <span class="mono">${esc(p.repo ? `${p.repo} ` : "")}#${esc(p.pr)}</span></b><span>${esc(r.resumen)}</span></div>
+    ${p.en ? `<span class="mono" style="font-size:12px;color:var(--tenue);white-space:nowrap">${esc(hace(p.en))}</span>` : ""}
+    <button class="btn chico prim" data-motivo="${esc(clave)}">${r.archivos.length ? "Ver qué falta" : "Ver motivo"}</button>
+    ${cerrar}
+  </div>`;
+}
+function cuerpoRechazo(r) {
+  const archivos = r.archivos.map((a) => `<div>
+      <div class="nombre"><span class="mono">${esc(a.nombre)}</span>${a.mas ? `<span class="mono" style="color:var(--warn-t)">+${esc(a.mas)} más</span>` : ""}</div>
+      ${a.lineas.length ? `<div class="lineas mono">${a.lineas.map((l) => `<div class="${l.tipo}">${l.tipo === "mas" ? "+ " : l.tipo === "menos" ? "− " : ""}${esc(l.t)}</div>`).join("")}</div>` : ""}
+    </div>`).join("");
+  return `<section style="display:flex;flex-direction:column;gap:8px"><span class="rot-motivo mono">Qué pasó</span>
+      <p style="margin:0;line-height:1.6">${r.rama ? `A esta rama solo entra código que ya está en <b>${esc(r.rama)}</b>. ` : ""}${esc(r.resumen)}${r.rama ? " El análisis no arrancó, así que no gastó tokens de tu Claude." : ""}</p></section>
+    ${archivos ? `<section style="display:flex;flex-direction:column;gap:8px"><span class="rot-motivo mono">Dónde se nota la diferencia</span>
+      <div class="falta-arch">${archivos}</div>
+      <span style="font-size:12px;color:var(--tenue)">+ es lo que tu PR trae y ${esc(r.rama)} no tiene; − es lo que quitas y ${esc(r.rama)} todavía tiene. Son ejemplos: compara tu rama con ${esc(r.rama)} para ver todo.</span></section>` : ""}
+    ${r.pasos.length ? `<section style="display:flex;flex-direction:column;gap:8px"><span class="rot-motivo mono">Qué hacer</span>
+      <ol style="margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;line-height:1.55">${r.pasos.map((x) => `<li>${esc(x)}</li>`).join("")}</ol></section>` : ""}`;
+}
 function cajonMotivo() {
   const m = S.motivos[S.motivo];
   if (!m) return "";
@@ -856,7 +927,7 @@ function cajonMotivo() {
       </div>
       <button class="icono" data-cerrar aria-label="Cerrar">${I_CERRAR}</button>
     </header>
-    <div class="cajon-cuerpo"><div class="motivo-texto">${m.html.split(" · ").map((x) => `<p>${x}</p>`).join("")}</div>
+    <div class="cajon-cuerpo">${m.rechazo ? cuerpoRechazo(m.rechazo) : `<div class="motivo-texto">${m.html.split(" · ").map((x) => `<p>${x}</p>`).join("")}</div>`}
       ${m.url ? `<a class="btn chico" style="align-self:flex-start" href="${esc(m.url)}" target="_blank" rel="noopener">Abrir el PR en CodeCommit</a>` : ""}</div>
   </aside>`;
 }
@@ -889,6 +960,8 @@ function nodo(p, anterior, rama) {
     if (an.estado === "corriendo" || an.estado === "v3" || (an.estado === "pendiente" && !an.entregado)) return n("corre", estadoPr(an)[0], "", ver);
     if (an.estado === "superada") return n("tu", "Cambió el commit", "Analízalo de nuevo", `<button class="btn prim chico" data-pedir="${esc(p.url)}">Analizar</button>`);
     if (an.estado === "cancelada" && an.accion === "v3_fallo") return n("mal", "El análisis falló", an.motivo ? esc(an.motivo) : "Vuelve a pedirlo", `<button class="btn prim chico" data-pedir="${esc(p.url)}">Analizar de nuevo</button>`);
+    if (an.estado === "cancelada" && an.accion === "v3_reanalizar") return n("mal", "Hay que volver a analizar", an.motivo ? esc(an.motivo) : "", `<button class="btn prim chico" data-pedir="${esc(p.url)}">Analizar de nuevo</button>`);
+    if (an.estado === "v3_analizado" && an.reanalizar) return n("mal", "Hay que volver a analizar", esc(an.reanalizar), `<button class="btn prim chico" data-pedir="${esc(p.url)}">Analizar de nuevo</button>`);
     if (an.estado === "v3_analizado") {
       const b = bloqueo(d);
       return b ? n("mal", `${punt ? punt + "/100 · " : ""}hay que corregir`, esc(b), `<button class="btn prim chico" data-abrir="${esc(an.id)}">Ver hallazgos</button>`)
@@ -898,6 +971,12 @@ function nodo(p, anterior, rama) {
     if (an.estado === "hecha" && an.accion === "comentado") return n("mal", "Con comentarios de Hodor", punt, ver);
   }
   const det = puertasDe(p.pr);
+  const soloRamas = det && !det.porque && (det.puertas || []).some((x) => !x.ok) && (det.puertas || []).every((x) => x.ok || String(x.id).startsWith("rama-"));
+  if (soloRamas) {
+    const nota = (det.puertas || []).filter((x) => !x.ok).map((x) => esc(x.texto)).join(" · ");
+    return n("tu", "Se puede analizar · no es aprobable", `${nota}. Puedes analizarlo y entregarlo; el aprobador lo ve marcado.`,
+      `<button class="btn prim chico" data-pedir="${esc(p.url)}">Analizar</button>`);
+  }
   if ((det && !det.listo) || (det && det.porque)) {
     const malas = (det.puertas || []).filter((x) => !x.ok);
     const pq = det.porque;
@@ -1342,7 +1421,7 @@ function cajon() {
       <span class="rot" style="${x.reglas.ok ? "" : "color:var(--bad)"}">Reglas de ramas · ${`a ${x.reglas.destino} solo entra lo que ya está en ${Object.keys(x.reglas.ramas || {}).join(" y ") || "la rama anterior"}`}</span>
       ${Object.entries(x.reglas.ramas).map(([rama, r]) => `<div style="display:flex;flex-direction:column;gap:4px"><span>${r.ok ? `<span class="chip c-ok">${I_OK} ${esc(rama)}</span> todo el código ya está en ${esc(rama)}` : `<span class="chip c-bad">${esc(rama)}</span> ${r.completo ? `falta código en ${esc(rama)}` : `no pude comparar todo contra ${esc(rama)}`}`}</span>
         ${(r.faltan || []).map((f) => `<span class="mono" style="font-size:12px;color:var(--bad);padding-left:8px">${esc(f.ruta)}${f.lineas ? ` · ${esc(f.lineas)} línea(s)` : ""}${f.motivo ? ` · ${esc(f.motivo)}` : ""}</span>`).join("")}</div>`).join("")}
-      ${x.reglas.ok ? "" : `<span style="font-size:13px;color:var(--bad)">Si lo envías así, Hodor lo deja esperando hasta que ese código llegue a la rama anterior.</span>`}
+      ${x.reglas.ok ? "" : `<span style="font-size:13px;color:var(--bad)">No es aprobable así: puedes entregarlo, pero el aprobador lo ve marcado y decide.</span>`}
     </section>` : "";
   const esc3 = (d.funcional && d.funcional.escenarios) || [];
   const tipoChip = (t) => `<span class="chip ${t === "feliz" ? "c-ok" : t === "error" ? "c-bad" : "c-info"}">${esc(t)}</span>`;
