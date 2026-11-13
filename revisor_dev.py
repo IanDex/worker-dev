@@ -39,7 +39,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "v3-worker 1.5.0.3"
+VERSION = "v3-worker 1.5.0.4"
 AQUI = Path(__file__).resolve().parent
 
 
@@ -1639,7 +1639,7 @@ _PING = {"corriendo": False, "version_en": 0.0, "version_nueva": None}
 
 def num_version(texto: str) -> tuple:
     import re
-    m = re.search(r"(\d+(?:\.\d+)*)", texto or "")
+    m = re.search(r"(\d+(?:\.\d+)*)\s*$", str(texto or ""))
     if not m:
         return ()
     partes = tuple(int(x) for x in m.group(1).split("."))
